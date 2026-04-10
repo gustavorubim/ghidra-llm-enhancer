@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from decomp_clarifier.adapters.compiler_clang import resolve_clang_executable
 from decomp_clarifier.compilation.binary_inventory import (
     artifact_for_binary,
     binary_format_for_host,
@@ -12,6 +15,7 @@ from decomp_clarifier.compilation.compile_db import binary_name, compiler_flags,
 from decomp_clarifier.settings import CompileConfig
 
 
+@pytest.mark.skipif(resolve_clang_executable("clang") is None, reason="requires clang")
 def test_build_runner_compiles_and_runs_tests(tmp_path: Path, sample_project) -> None:
     project_root = tmp_path / "generated_projects" / sample_project.project_id
     project_root.mkdir(parents=True)

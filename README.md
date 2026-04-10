@@ -270,9 +270,12 @@ PYTHONPATH=src python -m decomp_clarifier.cli train-grpo
 
 The included [run_headless_analysis.command](run_headless_analysis.command) reflects a local macOS setup and was used to shape the default headless adapter. Override the install path with either:
 
+- `DECOMP_CLARIFIER_COMPILER_EXECUTABLE` for an explicit Clang path when `clang` is not on `PATH`
 - `DECOMP_CLARIFIER_GHIDRA_DIR`
 - `DECOMP_CLARIFIER_GHIDRA_ANALYZE_HEADLESS`
 - `configs/ghidra/default.yaml`
+
+On Windows, the compiler adapter also probes common LLVM installs under `C:\Program Files\LLVM\bin` and Visual Studio's `VC\Tools\Llvm\...\bin` directories before failing.
 
 ## Testing
 

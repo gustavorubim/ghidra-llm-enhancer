@@ -11,6 +11,7 @@ import typer
 import yaml
 
 from decomp_clarifier.adapters.filesystem_cache import FilesystemCache
+from decomp_clarifier.adapters.compiler_clang import ClangCompiler
 from decomp_clarifier.adapters.ghidra_headless import GhidraHeadlessAdapter
 from decomp_clarifier.adapters.openrouter_client import OpenRouterClient
 from decomp_clarifier.baselines import naming_only, raw_ghidra
@@ -81,6 +82,14 @@ def _write_resolved(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
+def _ensure_compiler_available(compiler: ClangCompiler) -> None:
+    try:
+        _ = compiler.executable
+    except FileNotFoundError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+
 def _load_generated_projects(paths: ProjectPaths) -> list[GeneratedProject]:
     manifests = sorted(paths.generated_projects_dir.glob("*/project_manifest.json"))
     return [
@@ -131,6 +140,7 @@ def _quarantine_project(paths: ProjectPaths, project_id: str) -> None:
 def generate_projects(
     count: int | None = typer.Option(None, help="Override the configured project count."),
     generation_profile: str = typer.Option("default"),
+    compile_profile: str = typer.Option("clang_o0"),
     app_profile: str = typer.Option("default"),
 ) -> None:
     root, paths, run_id, run_dir, logger, app_config = _bootstrap(
@@ -141,11 +151,13 @@ def generate_projects(
         name=generation_profile,
         cli_overrides={"generation": {"project_count": count}} if count is not None else None,
     )
+    compile_config = load_compile_config(root, name=compile_profile)
     _write_resolved(
         run_dir / "resolved_config.yaml",
         {
             "app": app_config.model_dump(mode="python"),
             "generation": generation_config.model_dump(mode="python"),
+            "compile": compile_config.model_dump(mode="python"),
         },
     )
     client = OpenRouterClient(
@@ -160,8 +172,8 @@ def generate_projects(
         project_root=paths.generated_projects_dir,
         manifest_root=paths.manifests_dir,
     )
-    compile_config = load_compile_config(root, name="clang_o0")
     build_runner = BuildRunner(compile_config)
+    _ensure_compiler_available(build_runner.compiler)
     target_count = count or generation_config.generation.project_count
     max_attempts = max(target_count * 5, target_count)
     projects: list[GeneratedProject] = []
@@ -221,6 +233,7 @@ def compile_projects(
     )
     projects = _load_generated_projects(paths)
     runner = BuildRunner(compile_config)
+    _ensure_compiler_available(runner.compiler)
     manifests = [
         runner.compile_project(project, paths.generated_projects_dir, paths.binaries_dir)
         for project in projects

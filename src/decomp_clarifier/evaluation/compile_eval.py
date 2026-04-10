@@ -4,6 +4,7 @@ import re
 import tempfile
 from pathlib import Path
 
+from decomp_clarifier.adapters.compiler_clang import resolve_clang_executable
 from decomp_clarifier.adapters.subprocess_utils import run_subprocess, which
 
 
@@ -14,7 +15,7 @@ def _extract_includes(reference_source: str) -> str:
 
 
 def compile_candidate(cleaned_c: str, reference_source: str, compiler: str = "clang") -> bool:
-    resolved = which(compiler)
+    resolved = resolve_clang_executable(compiler) or which(compiler)
     if resolved is None or not cleaned_c.strip():
         return False
     includes = _extract_includes(reference_source)

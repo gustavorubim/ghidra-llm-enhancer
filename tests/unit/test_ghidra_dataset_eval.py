@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from decomp_clarifier.adapters.compiler_clang import resolve_clang_executable
 from decomp_clarifier.adapters.ghidra_headless import GhidraHeadlessAdapter
 from decomp_clarifier.baselines import naming_only, raw_ghidra
 from decomp_clarifier.baselines.simple_llm_cleanup import heuristic_cleanup
@@ -38,7 +39,7 @@ def test_ghidra_adapter_builds_command(tmp_path: Path, temp_app_config, monkeypa
         output_dir=tmp_path / "exports",
         project_name="proj_sample",
     )
-    assert command[0] == "/opt/ghidra/support/analyzeHeadless"
+    assert Path(command[0]) == Path("/opt/ghidra/support/analyzeHeadless")
     assert "ExportFunctions.java" in command
 
     monkeypatch.setattr(
@@ -82,6 +83,8 @@ def test_parse_exports_align_dataset_and_export_runner(
     class FakeAdapter:
         def run(self, *, binary_path, output_dir, project_name):
             output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "project_manifest.json").write_text("{}", encoding="utf-8")
+            (output_dir / "functions.jsonl").write_text("", encoding="utf-8")
             return type("Result", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
     runner = GhidraExportRunner(FakeAdapter())
@@ -117,7 +120,10 @@ def test_baselines_inference_and_evaluation(sample_dataset_samples, tmp_path: Pa
     assert score_readability(cleaned.cleaned_c) >= 0.0
     assert readability_improvement(cleaned.cleaned_c, sample.ghidra_decompiled_code) >= -1.0
     assert behavior_similarity(sample.target_clean_code, sample.target_clean_code) == 1.0
-    assert compile_candidate("int helper(void) { return 1; }", "int helper(void) { return 1; }")
+    compiler_available = resolve_clang_executable("clang") is not None
+    assert compile_candidate("int helper(void) { return 1; }", "int helper(void) { return 1; }") == (
+        compiler_available
+    )
 
     output = normalize_output(
         'prefix {"summary":"ok","confidence":1.0,'

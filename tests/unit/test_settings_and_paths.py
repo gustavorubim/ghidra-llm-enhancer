@@ -3,14 +3,18 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from decomp_clarifier.adapters.filesystem_cache import FilesystemCache
 from decomp_clarifier.paths import ProjectPaths
 from decomp_clarifier.settings import (
     deep_merge,
     dump_yaml,
     load_app_config,
+    load_compile_config,
     load_dotenv,
     load_ghidra_config,
+    load_yaml,
 )
 
 
@@ -25,9 +29,12 @@ def test_deep_merge_and_dump_yaml(tmp_path: Path, temp_app_config) -> None:
 
 def test_load_configs_and_paths(repo_root: Path, monkeypatch) -> None:
     monkeypatch.setenv("DECOMP_CLARIFIER_GHIDRA_DIR", "/tmp/ghidra")
+    monkeypatch.setenv("DECOMP_CLARIFIER_COMPILER_EXECUTABLE", "/tmp/clang")
     app_config = load_app_config(repo_root)
+    compile_config = load_compile_config(repo_root)
     ghidra_config = load_ghidra_config(repo_root)
     assert app_config.paths.generated_projects_dir == "data/raw/generated_projects"
+    assert compile_config.compiler.executable == "/tmp/clang"
     assert ghidra_config.install_dir == "/tmp/ghidra"
 
     root = ProjectPaths.discover(repo_root)
@@ -53,3 +60,27 @@ def test_load_dotenv_aliases(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     load_dotenv(tmp_path)
     assert os.getenv("OPENROUTER_API_KEY") == "secret-value"
+
+
+def test_load_dotenv_preserves_existing_values_and_skips_invalid_lines(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / ".env").write_text(
+        "# comment\nOPENROUTER_API_KEY=from-dotenv\nMALFORMED_LINE\nEXTRA=' spaced '\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "already-set")
+    monkeypatch.delenv("EXTRA", raising=False)
+    load_dotenv(tmp_path)
+    assert os.getenv("OPENROUTER_API_KEY") == "already-set"
+    assert os.getenv("EXTRA") == " spaced "
+
+
+def test_load_yaml_errors_for_missing_and_non_mapping(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        load_yaml(tmp_path / "missing.yaml")
+
+    invalid = tmp_path / "invalid.yaml"
+    invalid.write_text("- item\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_yaml(invalid)

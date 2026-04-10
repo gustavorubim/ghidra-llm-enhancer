@@ -37,6 +37,7 @@ def test_cli_workflow_smoke(
         run_dir = temp_paths.run_dir(run_id)
         return root, temp_paths, run_id, run_dir, test_logger, temp_app_config
 
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr(cli_module, "_bootstrap", fake_bootstrap)
     monkeypatch.setattr(
         cli_module,
@@ -76,20 +77,20 @@ def test_cli_workflow_smoke(
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def generate_many(self):
+        def generate_one(self, index: int):
             project_dir = temp_paths.generated_projects_dir / sample_project.project_id
             project_dir.mkdir(parents=True, exist_ok=True)
             (project_dir / "project_manifest.json").write_text(
                 sample_project.model_dump_json(), encoding="utf-8"
             )
-            return [sample_project]
+            return sample_project
 
     monkeypatch.setattr(cli_module, "ProjectGenerator", DummyProjectGenerator)
     monkeypatch.setattr(cli_module, "OpenRouterClient", lambda **kwargs: object())
 
     class DummyBuildRunner:
         def __init__(self, _config):
-            pass
+            self.compiler = type("Compiler", (), {"executable": "clang"})()
 
         def compile_project(self, project, project_root, output_root):
             manifest = CompileManifest.model_validate(

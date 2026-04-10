@@ -188,12 +188,18 @@ def _read_env_overrides() -> dict[str, Any]:
     overrides: dict[str, Any] = {}
     ghidra_dir = os.getenv("DECOMP_CLARIFIER_GHIDRA_DIR")
     analyze_headless = os.getenv("DECOMP_CLARIFIER_GHIDRA_ANALYZE_HEADLESS")
+    compiler_executable = os.getenv("DECOMP_CLARIFIER_COMPILER_EXECUTABLE") or os.getenv(
+        "DECOMP_CLARIFIER_CLANG"
+    )
     if ghidra_dir or analyze_headless:
         overrides["ghidra"] = {}
         if ghidra_dir:
             overrides["ghidra"]["install_dir"] = ghidra_dir
         if analyze_headless:
             overrides["ghidra"]["analyze_headless_path"] = analyze_headless
+    if compiler_executable:
+        overrides.setdefault("compiler", {})
+        overrides["compiler"]["executable"] = compiler_executable
     return overrides
 
 
