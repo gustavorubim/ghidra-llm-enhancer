@@ -49,24 +49,23 @@ class ProjectGenerator:
         validate_project(project, self.config.validation)
         return self.write_project(project)
 
-    def _uniquify_project(self, project: GeneratedProject) -> GeneratedProject:
-        base_id = project.project_id
+    def _claim_project_dir(self, base_id: str) -> tuple[str, Path]:
+        """Atomically claim a unique project directory using mkdir as the claim step."""
         candidate_id = base_id
         suffix = 1
-        while (
-            (self.project_root / candidate_id).exists()
-            or (self.manifest_root / f"{candidate_id}.json").exists()
-        ):
-            candidate_id = f"{base_id}_v{suffix}"
-            suffix += 1
-        if candidate_id == base_id:
-            return project
-        return project.model_copy(update={"project_id": candidate_id})
+        while True:
+            destination = self.project_root / candidate_id
+            try:
+                destination.mkdir(parents=True, exist_ok=False)
+                return candidate_id, destination
+            except FileExistsError:
+                candidate_id = f"{base_id}_v{suffix}"
+                suffix += 1
 
     def write_project(self, project: GeneratedProject) -> GeneratedProject:
-        project = self._uniquify_project(project)
-        destination = self.project_root / project.project_id
-        destination.mkdir(parents=True, exist_ok=True)
+        project_id, destination = self._claim_project_dir(project.project_id)
+        if project_id != project.project_id:
+            project = project.model_copy(update={"project_id": project_id})
         for file in project.files:
             output = destination / file.path
             output.parent.mkdir(parents=True, exist_ok=True)
