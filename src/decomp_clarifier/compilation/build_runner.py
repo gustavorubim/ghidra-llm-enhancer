@@ -25,6 +25,7 @@ class BuildRunner:
     def __init__(self, config: CompileConfig) -> None:
         self.config = config
         self.compiler = ClangCompiler(config.compiler)
+        self._compiler_version = self.compiler.version()
 
     def compile_project(
         self, project: GeneratedProject, project_root: Path, output_root: Path
@@ -45,7 +46,7 @@ class BuildRunner:
             project_id=project.project_id,
             build_id=str(uuid.uuid4()),
             compiler_family=self.config.compiler.family,
-            compiler_version=self.compiler.version(),
+            compiler_version=self._compiler_version,
             host_os=host_os_name(),
             binary_format=binary_format_for_host(host_os_name()),
             arch=artifact_for_binary(output_path).arch,

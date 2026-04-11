@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -31,5 +33,10 @@ class FilesystemCache:
 
     def set(self, key: str, value: dict[str, Any]) -> Path:
         path = self.path_for_key(key)
-        path.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
+        with tempfile.NamedTemporaryFile(
+            "w", dir=self.root, suffix=".tmp", delete=False, encoding="utf-8"
+        ) as f:
+            json.dump(value, f, indent=2, sort_keys=True)
+            tmp = f.name
+        os.replace(tmp, path)
         return path

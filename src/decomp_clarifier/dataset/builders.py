@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import uuid
 from pathlib import Path
 
 from decomp_clarifier.dataset.splitters import split_project_ids
@@ -43,7 +43,9 @@ def build_function_dataset(
         for aligned in align_functions(project, parsed_project):
             for task_type in task_types:
                 sample = FunctionDatasetSample(
-                    sample_id=str(uuid.uuid4()),
+                    sample_id=hashlib.sha256(
+                        f"{project.project_id}:{aligned.source.name}:{task_type}:{compile_manifest.opt_level}:{compile_manifest.compiler_family}".encode()
+                    ).hexdigest()[:16],
                     project_id=project.project_id,
                     split=split_map[project.project_id],
                     task_type=task_type,
