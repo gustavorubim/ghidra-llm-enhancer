@@ -15,9 +15,10 @@ def load_model_and_tokenizer(config: TrainingConfig) -> tuple[Any, Any]:
         load_in_4bit=bool(config.training.load_in_4bit),
         device_map="cuda:0",
     )
+    lora_r = config.training.lora_rank or 16
     model = FastLanguageModel.get_peft_model(
         model,
-        r=config.training.lora_rank or 16,
+        r=lora_r,
         target_modules=[
             "q_proj",
             "k_proj",
@@ -27,7 +28,9 @@ def load_model_and_tokenizer(config: TrainingConfig) -> tuple[Any, Any]:
             "up_proj",
             "down_proj",
         ],
-        lora_alpha=(config.training.lora_rank or 16) * 2,
-        use_gradient_checkpointing=True,
+        lora_alpha=lora_r,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing="unsloth",
     )
     return model, tokenizer
