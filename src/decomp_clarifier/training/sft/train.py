@@ -16,6 +16,7 @@ def run_sft_training(dataset_path: Path, output_dir: Path, config: TrainingConfi
     versions = validate_version_lock()
     hardware = detect_hardware()
 
+    import unsloth  # noqa: F401 - must be imported before trl/transformers  # type: ignore[import-not-found]
     from datasets import load_dataset  # type: ignore[import-not-found]
     from trl import SFTConfig, SFTTrainer  # type: ignore[import-not-found]
 
@@ -28,16 +29,19 @@ def run_sft_training(dataset_path: Path, output_dir: Path, config: TrainingConfi
         )
     dataset = dataset.map(lambda row: {"text": combine_prompt_and_response(row)})
 
+    max_length = config.training.max_seq_length or 512
+    max_steps = config.training.max_steps if getattr(config.training, "max_steps", None) is not None else -1
     trainer = SFTTrainer(
         model=model,
         tokenizer=tokenizer,
         train_dataset=dataset,
         args=SFTConfig(
             output_dir=str(output_dir),
-            max_seq_length=config.training.max_seq_length or 4096,
+            max_length=max_length,
             per_device_train_batch_size=config.training.batch_size or 1,
             gradient_accumulation_steps=config.training.grad_accum_steps or 1,
             num_train_epochs=config.training.epochs or 1,
+            max_steps=max_steps,
             learning_rate=2e-4,
             logging_steps=1,
         ),

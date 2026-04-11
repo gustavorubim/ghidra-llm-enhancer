@@ -18,3 +18,4 @@ data/processed/
 data/raw/
 *.egg-info/
 *.pyc
+unsloth_compiled_cache/

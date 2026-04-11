@@ -21,6 +21,17 @@ import java.util.List;
 import java.util.Map;
 
 public class ExportFunctions extends GhidraScript {
+    private static String stripBinaryExtension(String name) {
+        int dot = name.lastIndexOf('.');
+        if (dot > 0) {
+            String ext = name.substring(dot).toLowerCase();
+            if (ext.equals(".exe") || ext.equals(".elf") || ext.equals(".out") || ext.equals(".bin")) {
+                return name.substring(0, dot);
+            }
+        }
+        return name;
+    }
+
     @Override
     public void run() throws Exception {
         String[] args = getScriptArgs();
@@ -77,7 +88,7 @@ public class ExportFunctions extends GhidraScript {
         writeJoinedFile(symbolsFile, symbolNames, "\n");
 
         Map<String, Object> manifest = new LinkedHashMap<>();
-        manifest.put("project_id", currentProgram.getName());
+        manifest.put("project_id", stripBinaryExtension(currentProgram.getName()));
         manifest.put("binary_path", currentProgram.getExecutablePath());
         manifest.put("binary_name", currentProgram.getName());
         manifest.put("output_dir", outputDir.getAbsolutePath());
@@ -101,7 +112,7 @@ public class ExportFunctions extends GhidraScript {
             decompiledText = results.getDecompiledFunction().getC();
         }
 
-        record.put("project_id", currentProgram.getName());
+        record.put("project_id", stripBinaryExtension(currentProgram.getName()));
         record.put("binary_path", currentProgram.getExecutablePath());
         record.put("binary_name", currentProgram.getName());
         record.put("function_address", function.getEntryPoint().toString());

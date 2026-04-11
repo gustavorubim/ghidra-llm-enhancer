@@ -61,6 +61,7 @@ def run_grpo_training(dataset_path: Path, output_dir: Path, config: TrainingConf
     versions = validate_version_lock()
     hardware = detect_hardware()
 
+    import unsloth  # noqa: F401 - must be imported before trl/transformers  # type: ignore[import-not-found]
     from datasets import load_dataset  # type: ignore[import-not-found]
     from trl import GRPOConfig, GRPOTrainer  # type: ignore[import-not-found]
 
@@ -110,6 +111,7 @@ def run_grpo_training(dataset_path: Path, output_dir: Path, config: TrainingConf
             for index, completion in enumerate(completions)
         ]
 
+    max_steps = config.training.max_steps if config.training.max_steps is not None else -1
     trainer = GRPOTrainer(
         model=model,
         tokenizer=tokenizer,
@@ -117,9 +119,10 @@ def run_grpo_training(dataset_path: Path, output_dir: Path, config: TrainingConf
         train_dataset=dataset,
         args=GRPOConfig(
             output_dir=str(output_dir),
-            max_prompt_length=config.training.max_prompt_length or 3072,
-            max_completion_length=config.training.max_completion_length or 1024,
+            max_prompt_length=config.training.max_prompt_length or 512,
+            max_completion_length=config.training.max_completion_length or 256,
             num_generations=config.training.generations_per_prompt or 4,
+            max_steps=max_steps,
         ),
     )
     trainer.train()

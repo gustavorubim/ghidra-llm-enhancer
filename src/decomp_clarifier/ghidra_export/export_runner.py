@@ -18,6 +18,8 @@ class GhidraExportRunner:
             )
         binary_path = Path(manifest.binaries[0].path)
         export_dir = output_root / manifest.project_id
+        if (export_dir / "project_manifest.json").exists() and (export_dir / "functions.jsonl").exists():
+            return export_dir
         result = self.adapter.run(
             binary_path=binary_path,
             output_dir=export_dir,

@@ -7,6 +7,16 @@ from pathlib import Path
 
 import pytest
 
+# Pre-import torch so its __init__.py runs before any test monkeypatches
+# platform.system. torch's _load_global_deps() calls platform.system() to
+# decide between .dll / .so / .dylib, and the windows_guard monkeypatch
+# briefly makes it return "Darwin", which would cause torch to look for
+# libtorch_global_deps.dylib on Windows.
+try:
+    import torch as _torch_preload  # noqa: F401
+except ImportError:
+    pass
+
 from decomp_clarifier.adapters.compiler_clang import resolve_clang_executable
 from decomp_clarifier.evaluation.behavior_eval import behavior_similarity
 from decomp_clarifier.schemas.model_io import ClarifiedFunctionOutput
@@ -47,15 +57,15 @@ def test_training_utilities_and_rewards(
     monkeypatch.setattr(
         "decomp_clarifier.training.utils.version_lock.metadata.version",
         lambda name: {
-            "unsloth": "2025.4.1",
-            "trl": "0.17.1",
-            "transformers": "4.51.1",
-            "datasets": "3.1.0",
-            "accelerate": "1.2.0",
+            "unsloth": "2026.4.1",
+            "trl": "0.24.0",
+            "transformers": "5.5.0",
+            "datasets": "4.3.0",
+            "accelerate": "1.13.0",
         }[name],
     )
     versions = validate_version_lock()
-    assert versions["unsloth"] == "2025.4.1"
+    assert versions["unsloth"] == "2026.4.1"
 
     from importlib.metadata import PackageNotFoundError
 
@@ -72,11 +82,11 @@ def test_training_utilities_and_rewards(
     monkeypatch.setattr(
         "decomp_clarifier.training.utils.version_lock.metadata.version",
         lambda name: {
-            "unsloth": "2025.4.1",
-            "trl": "0.17.1",
-            "transformers": "4.51.1",
-            "datasets": "3.1.0",
-            "accelerate": "1.2.0",
+            "unsloth": "2026.4.1",
+            "trl": "0.24.0",
+            "transformers": "5.5.0",
+            "datasets": "4.3.0",
+            "accelerate": "1.13.0",
         }[name],
     )
 
@@ -237,11 +247,11 @@ def test_min_train_samples_gate(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "decomp_clarifier.training.utils.version_lock.metadata.version",
         lambda name: {
-            "unsloth": "2025.4.1",
-            "trl": "0.17.1",
-            "transformers": "4.51.1",
-            "datasets": "3.1.0",
-            "accelerate": "1.2.0",
+            "unsloth": "2026.4.1",
+            "trl": "0.24.0",
+            "transformers": "5.5.0",
+            "datasets": "4.3.0",
+            "accelerate": "1.13.0",
         }[name],
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
@@ -300,7 +310,7 @@ def test_run_training_wrappers_with_fake_modules(
 
     class FakeFastLanguageModel:
         @staticmethod
-        def from_pretrained(model_name, max_seq_length, load_in_4bit):
+        def from_pretrained(model_name, max_seq_length, load_in_4bit, **kwargs):
             return object(), object()
 
         @staticmethod
@@ -354,11 +364,11 @@ def test_run_training_wrappers_with_fake_modules(
     monkeypatch.setattr(
         "decomp_clarifier.training.utils.version_lock.metadata.version",
         lambda name: {
-            "unsloth": "2025.4.1",
-            "trl": "0.17.1",
-            "transformers": "4.51.1",
-            "datasets": "3.1.0",
-            "accelerate": "1.2.0",
+            "unsloth": "2026.4.1",
+            "trl": "0.24.0",
+            "transformers": "5.5.0",
+            "datasets": "4.3.0",
+            "accelerate": "1.13.0",
         }[name],
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)

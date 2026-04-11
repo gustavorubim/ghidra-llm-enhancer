@@ -114,6 +114,7 @@ class TrainingRunConfig(BaseModel):
     batch_size: int | None = None
     grad_accum_steps: int | None = None
     epochs: int | None = None
+    max_steps: int | None = None
     max_prompt_length: int | None = None
     max_completion_length: int | None = None
     generations_per_prompt: int | None = None

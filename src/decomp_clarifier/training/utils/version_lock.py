@@ -3,10 +3,10 @@ from __future__ import annotations
 from importlib import metadata
 
 VALIDATED_VERSIONS = {
-    "unsloth": "2025.",
-    "trl": "0.17.",
-    "transformers": "4.51.",
-    "datasets": "3.",
+    "unsloth": "2026.",
+    "trl": "0.24.",
+    "transformers": "5.",
+    "datasets": "4.",
     "accelerate": "1.",
 }
 

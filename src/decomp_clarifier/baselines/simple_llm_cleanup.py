@@ -42,12 +42,15 @@ class PromptOnlyCleanupBaseline:
                 semantic_summary=sample.semantic_summary,
             ),
         )
-        payload = self.client.generate_json(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=1200,
-            temperature=0.2,
-            response_schema=ClarifiedFunctionOutput.model_json_schema(),
-            schema_version="prompt-only-baseline",
-        )
-        return ClarifiedFunctionOutput.model_validate(json.loads(json.dumps(payload)))
+        try:
+            payload = self.client.generate_json(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1200,
+                temperature=0.2,
+                response_schema=ClarifiedFunctionOutput.model_json_schema(),
+                schema_version="prompt-only-baseline",
+            )
+            return ClarifiedFunctionOutput.model_validate(json.loads(json.dumps(payload)))
+        except Exception:
+            return heuristic_cleanup(sample)

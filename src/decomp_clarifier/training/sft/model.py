@@ -8,10 +8,12 @@ from decomp_clarifier.settings import TrainingConfig
 def load_model_and_tokenizer(config: TrainingConfig) -> tuple[Any, Any]:
     from unsloth import FastLanguageModel  # type: ignore[import-not-found]
 
+    max_seq_length = config.training.max_seq_length or 512
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=config.model.base_model_id,
-        max_seq_length=config.training.max_seq_length,
+        max_seq_length=max_seq_length,
         load_in_4bit=bool(config.training.load_in_4bit),
+        device_map="cuda:0",
     )
     model = FastLanguageModel.get_peft_model(
         model,

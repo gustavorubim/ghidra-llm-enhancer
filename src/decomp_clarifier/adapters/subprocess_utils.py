@@ -38,6 +38,7 @@ def run_subprocess(
         args,
         cwd=str(cwd) if cwd else None,
         env=env,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         timeout=timeout_seconds,

@@ -37,14 +37,15 @@ eval = [
   "polars>=1.29.0",
 ]
 train-windows-cuda = [
-  "accelerate>=1.6.0",
+  "accelerate>=1.13.0",
   "bitsandbytes>=0.45.5",
-  "datasets>=3.5.0",
+  "datasets>=4.3.0,<4.4.0",
   "peft>=0.15.2",
-  "torch>=2.7.0",
-  "transformers>=4.51.0",
-  "trl>=0.17.0",
-  "unsloth>=2025.4.0",
+  "torch>=2.10.0,<2.11.0",
+  "transformers>=5.5.0,<=5.5.0",
+  "trl>=0.18.2,<=0.24.0",
+  "unsloth>=2026.4.0",
+  "xformers>=0.0.27.post2",
 ]
 
 [project.scripts]
