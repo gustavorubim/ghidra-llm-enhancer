@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import types
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 
 import pytest
@@ -37,9 +38,14 @@ from decomp_clarifier.training.sft.callbacks import write_training_summary
 from decomp_clarifier.training.sft.data import combine_prompt_and_response, load_sft_records
 from decomp_clarifier.training.utils.hardware import detect_hardware
 from decomp_clarifier.training.utils.memory_profiles import select_memory_profile
-from decomp_clarifier.training.utils.trl_compat import normalize_optional_flag
+from decomp_clarifier.training.utils.trl_compat import (
+    ensure_model_warnings_issued,
+    normalize_optional_flag,
+)
 from decomp_clarifier.training.utils.version_lock import collect_versions, validate_version_lock
 from decomp_clarifier.training.windows_guard import TrainingEnvironmentError, ensure_windows_cuda
+
+_ORIGINAL_METADATA_VERSION = importlib_metadata.version
 
 
 def _validated_training_versions() -> dict[str, str]:
@@ -52,6 +58,13 @@ def _validated_training_versions() -> dict[str, str]:
         "tensorboard": "2.20.0",
         "matplotlib": "3.10.3",
     }
+
+
+def _version_with_fallback(name: str):
+    validated = _validated_training_versions()
+    if name in validated:
+        return validated[name]
+    return _ORIGINAL_METADATA_VERSION(name)
 
 
 def test_training_utilities_and_rewards(
@@ -69,7 +82,7 @@ def test_training_utilities_and_rewards(
 
     monkeypatch.setattr(
         "decomp_clarifier.training.utils.version_lock.metadata.version",
-        lambda name: _validated_training_versions()[name],
+        _version_with_fallback,
     )
     versions = validate_version_lock()
     assert versions["unsloth"] == "2026.4.1"
@@ -88,7 +101,7 @@ def test_training_utilities_and_rewards(
 
     monkeypatch.setattr(
         "decomp_clarifier.training.utils.version_lock.metadata.version",
-        lambda name: _validated_training_versions()[name],
+        _version_with_fallback,
     )
 
     summary_path = write_training_summary(tmp_path / "summary.json", {"loss": 0.1})
@@ -195,6 +208,14 @@ def test_training_utilities_and_rewards(
     assert normalize_optional_flag((True, "1.0"))
     assert not normalize_optional_flag(False)
 
+    leaf = types.SimpleNamespace()
+    middle = types.SimpleNamespace(model=leaf)
+    root = types.SimpleNamespace(base_model=middle)
+    assert ensure_model_warnings_issued(root) == 3
+    assert isinstance(root.warnings_issued, dict)
+    assert isinstance(middle.warnings_issued, dict)
+    assert isinstance(leaf.warnings_issued, dict)
+
 
 def test_min_train_samples_gate(monkeypatch, tmp_path: Path) -> None:
     from decomp_clarifier.settings import TrainingConfig
@@ -259,7 +280,7 @@ def test_min_train_samples_gate(monkeypatch, tmp_path: Path) -> None:
     )
     monkeypatch.setattr(
         "decomp_clarifier.training.utils.version_lock.metadata.version",
-        lambda name: _validated_training_versions()[name],
+        _version_with_fallback,
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setitem(
@@ -390,7 +411,7 @@ def test_run_training_wrappers_with_fake_modules(
     )
     monkeypatch.setattr(
         "decomp_clarifier.training.utils.version_lock.metadata.version",
-        lambda name: _validated_training_versions()[name],
+        _version_with_fallback,
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setitem(

@@ -311,26 +311,56 @@ class TrainingTelemetry:
         return summary
 
 
-class TrainingTelemetryCallback:
-    def __init__(self, telemetry: TrainingTelemetry) -> None:
-        self.telemetry = telemetry
+def create_training_telemetry_callback(telemetry: TrainingTelemetry) -> Any:
+    try:
+        from transformers import TrainerCallback  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover - fallback for lightweight test doubles
+        class _FallbackTrainingTelemetryCallback:
+            def __init__(self, telemetry: TrainingTelemetry) -> None:
+                self.telemetry = telemetry
 
-    def on_log(
-        self,
-        args: Any,
-        state: Any,
-        control: Any,
-        logs: dict[str, Any] | None = None,
-        **_: Any,
-    ) -> Any:
-        if logs:
-            self.telemetry.record_metrics(
-                logs,
-                step=getattr(state, "global_step", None),
-                epoch=getattr(state, "epoch", None),
-                source="trainer",
-            )
-        return control
+            def on_log(
+                self,
+                args: Any,
+                state: Any,
+                control: Any,
+                logs: dict[str, Any] | None = None,
+                **_: Any,
+            ) -> Any:
+                if logs:
+                    self.telemetry.record_metrics(
+                        logs,
+                        step=getattr(state, "global_step", None),
+                        epoch=getattr(state, "epoch", None),
+                        source="trainer",
+                    )
+                return control
+
+        return _FallbackTrainingTelemetryCallback(telemetry)
+
+    class _TrainingTelemetryCallback(TrainerCallback):
+        def __init__(self, telemetry: TrainingTelemetry) -> None:
+            super().__init__()
+            self.telemetry = telemetry
+
+        def on_log(
+            self,
+            args: Any,
+            state: Any,
+            control: Any,
+            logs: dict[str, Any] | None = None,
+            **_: Any,
+        ) -> Any:
+            if logs:
+                self.telemetry.record_metrics(
+                    logs,
+                    step=getattr(state, "global_step", None),
+                    epoch=getattr(state, "epoch", None),
+                    source="trainer",
+                )
+            return control
+
+    return _TrainingTelemetryCallback(telemetry)
 
 
 def reward_log_row(rewards: list[float], *, step: int) -> dict[str, float | int]:

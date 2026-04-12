@@ -13,10 +13,13 @@ from decomp_clarifier.training.grpo.rollout import normalize_completion
 from decomp_clarifier.training.utils.hardware import detect_hardware
 from decomp_clarifier.training.utils.telemetry import (
     TrainingTelemetry,
-    TrainingTelemetryCallback,
+    create_training_telemetry_callback,
     reward_log_row,
 )
-from decomp_clarifier.training.utils.trl_compat import patch_trl_optional_availability
+from decomp_clarifier.training.utils.trl_compat import (
+    ensure_model_warnings_issued,
+    patch_trl_optional_availability,
+)
 from decomp_clarifier.training.utils.version_lock import validate_version_lock
 from decomp_clarifier.training.windows_guard import ensure_windows_cuda
 
@@ -91,6 +94,8 @@ def run_grpo_training(dataset_path: Path, output_dir: Path, config: TrainingConf
     from decomp_clarifier.training.sft.model import load_model_and_tokenizer
 
     model, tokenizer = load_model_and_tokenizer(config)
+    patched_model_count = ensure_model_warnings_issued(model)
+    logger.info("patched warnings_issued on grpo model_chain_nodes=%s", patched_model_count)
     dataset = load_dataset("json", data_files=str(dataset_path), split="train")
     dataset = dataset.map(
         lambda row: {"prompt": prompt_from_record(row), **reward_fields_from_record(row)}
@@ -107,6 +112,11 @@ def run_grpo_training(dataset_path: Path, output_dir: Path, config: TrainingConf
         if config.training.behavior_similarity_threshold is not None
         else _BEHAVIOR_THRESHOLD
     )
+    batch_size = config.training.batch_size or config.hardware.batch_size or 1
+    grad_accum_steps = config.training.grad_accum_steps or 1
+    epochs = config.training.epochs or 1
+    num_generations = config.training.generations_per_prompt or 4
+    generation_batch_size = batch_size * max(grad_accum_steps, num_generations)
     reward_step = 0
 
     def reward_func(
@@ -163,20 +173,29 @@ def run_grpo_training(dataset_path: Path, output_dir: Path, config: TrainingConf
             logging_first_step=True,
             logging_steps=1,
             logging_strategy="steps",
+            per_device_train_batch_size=batch_size,
+            gradient_accumulation_steps=grad_accum_steps,
+            num_train_epochs=epochs,
             max_prompt_length=config.training.max_prompt_length or 512,
             max_completion_length=config.training.max_completion_length or 256,
-            num_generations=config.training.generations_per_prompt or 4,
+            num_generations=num_generations,
+            generation_batch_size=generation_batch_size,
             max_steps=max_steps,
             report_to=["tensorboard"],
         ),
-        callbacks=[TrainingTelemetryCallback(telemetry)],
+        callbacks=[create_training_telemetry_callback(telemetry)],
     )
     logger.info(
-        "configured grpo trainer max_prompt_length=%s max_completion_length=%s "
+        "configured grpo trainer batch_size=%s grad_accum=%s epochs=%s "
+        "generation_batch_size=%s max_prompt_length=%s max_completion_length=%s "
         "generations=%s max_steps=%s",
+        batch_size,
+        grad_accum_steps,
+        epochs,
+        generation_batch_size,
         config.training.max_prompt_length or 512,
         config.training.max_completion_length or 256,
-        config.training.generations_per_prompt or 4,
+        num_generations,
         max_steps,
     )
     train_result = trainer.train()

@@ -10,7 +10,7 @@ from decomp_clarifier.training.sft.model import load_model_and_tokenizer
 from decomp_clarifier.training.utils.hardware import detect_hardware
 from decomp_clarifier.training.utils.telemetry import (
     TrainingTelemetry,
-    TrainingTelemetryCallback,
+    create_training_telemetry_callback,
 )
 from decomp_clarifier.training.utils.version_lock import validate_version_lock
 from decomp_clarifier.training.windows_guard import ensure_windows_cuda
@@ -83,7 +83,7 @@ def run_sft_training(dataset_path: Path, output_dir: Path, config: TrainingConfi
             report_to=["tensorboard"],
         ),
         dataset_text_field="text",
-        callbacks=[TrainingTelemetryCallback(telemetry)],
+        callbacks=[create_training_telemetry_callback(telemetry)],
     )
     logger.info(
         "configured sft trainer max_length=%s batch_size=%s grad_accum=%s epochs=%s max_steps=%s",
