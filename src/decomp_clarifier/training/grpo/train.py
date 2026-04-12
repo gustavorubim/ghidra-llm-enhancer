@@ -117,6 +117,24 @@ def run_grpo_training(dataset_path: Path, output_dir: Path, config: TrainingConf
     epochs = config.training.epochs or 1
     num_generations = config.training.generations_per_prompt or 4
     generation_batch_size = batch_size * max(grad_accum_steps, num_generations)
+    learning_rate = (
+        config.training.learning_rate if config.training.learning_rate is not None else 5e-6
+    )
+    adam_beta1 = config.training.adam_beta1 if config.training.adam_beta1 is not None else 0.9
+    adam_beta2 = (
+        config.training.adam_beta2 if config.training.adam_beta2 is not None else 0.99
+    )
+    weight_decay = (
+        config.training.weight_decay if config.training.weight_decay is not None else 0.1
+    )
+    warmup_ratio = (
+        config.training.warmup_ratio if config.training.warmup_ratio is not None else 0.1
+    )
+    lr_scheduler_type = config.training.lr_scheduler_type or "cosine"
+    optim = config.training.optim or "adamw_8bit"
+    max_grad_norm = (
+        config.training.max_grad_norm if config.training.max_grad_norm is not None else 0.1
+    )
     reward_step = 0
 
     def reward_func(
@@ -176,27 +194,43 @@ def run_grpo_training(dataset_path: Path, output_dir: Path, config: TrainingConf
             per_device_train_batch_size=batch_size,
             gradient_accumulation_steps=grad_accum_steps,
             num_train_epochs=epochs,
+            learning_rate=learning_rate,
+            adam_beta1=adam_beta1,
+            adam_beta2=adam_beta2,
+            weight_decay=weight_decay,
+            warmup_ratio=warmup_ratio,
+            lr_scheduler_type=lr_scheduler_type,
+            optim=optim,
             max_prompt_length=config.training.max_prompt_length or 512,
             max_completion_length=config.training.max_completion_length or 256,
             num_generations=num_generations,
             generation_batch_size=generation_batch_size,
             max_steps=max_steps,
+            max_grad_norm=max_grad_norm,
+            save_steps=(
+                config.training.save_steps
+                or (max_steps if max_steps > 0 else 100)
+            ),
             report_to=["tensorboard"],
         ),
         callbacks=[create_training_telemetry_callback(telemetry)],
     )
     logger.info(
         "configured grpo trainer batch_size=%s grad_accum=%s epochs=%s "
-        "generation_batch_size=%s max_prompt_length=%s max_completion_length=%s "
-        "generations=%s max_steps=%s",
+        "generation_batch_size=%s learning_rate=%s scheduler=%s "
+        "max_prompt_length=%s max_completion_length=%s generations=%s max_steps=%s "
+        "save_steps=%s",
         batch_size,
         grad_accum_steps,
         epochs,
         generation_batch_size,
+        learning_rate,
+        lr_scheduler_type,
         config.training.max_prompt_length or 512,
         config.training.max_completion_length or 256,
         num_generations,
         max_steps,
+        config.training.save_steps or (max_steps if max_steps > 0 else 100),
     )
     train_result = trainer.train()
     trainer.save_model(str(output_dir))

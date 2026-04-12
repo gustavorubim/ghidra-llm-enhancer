@@ -337,6 +337,8 @@ def test_run_training_wrappers_with_fake_modules(
     from decomp_clarifier.training.grpo.train import run_grpo_training
     from decomp_clarifier.training.sft.train import run_sft_training
 
+    captured_grpo_args: list[object] = []
+
     class FakeCuda:
         @staticmethod
         def is_available() -> bool:
@@ -394,6 +396,7 @@ def test_run_training_wrappers_with_fake_modules(
         def __init__(self, **kwargs):
             assert "processing_class" in kwargs
             assert "tokenizer" not in kwargs
+            captured_grpo_args.append(kwargs["args"])
             super().__init__(**kwargs)
 
         def train(self):
@@ -457,6 +460,15 @@ def test_run_training_wrappers_with_fake_modules(
                 "max_prompt_length": 128,
                 "max_completion_length": 64,
                 "generations_per_prompt": 2,
+                "learning_rate": 7e-6,
+                "adam_beta1": 0.85,
+                "adam_beta2": 0.97,
+                "weight_decay": 0.05,
+                "warmup_ratio": 0.2,
+                "lr_scheduler_type": "linear",
+                "optim": "adamw_8bit",
+                "max_grad_norm": 0.2,
+                "save_steps": 17,
                 "behavior_similarity_threshold": 0.0,
             },
         }
@@ -465,6 +477,16 @@ def test_run_training_wrappers_with_fake_modules(
     grpo_manifest = run_grpo_training(dataset_path, tmp_path / "grpo", config)
     assert sft_manifest.exists()
     assert grpo_manifest.exists()
+    assert len(captured_grpo_args) == 1
+    assert captured_grpo_args[0].learning_rate == 7e-6
+    assert captured_grpo_args[0].adam_beta1 == 0.85
+    assert captured_grpo_args[0].adam_beta2 == 0.97
+    assert captured_grpo_args[0].weight_decay == 0.05
+    assert captured_grpo_args[0].warmup_ratio == 0.2
+    assert captured_grpo_args[0].lr_scheduler_type == "linear"
+    assert captured_grpo_args[0].optim == "adamw_8bit"
+    assert captured_grpo_args[0].max_grad_norm == 0.2
+    assert captured_grpo_args[0].save_steps == 17
 
     sft_payload = json.loads(sft_manifest.read_text(encoding="utf-8"))
     grpo_payload = json.loads(grpo_manifest.read_text(encoding="utf-8"))

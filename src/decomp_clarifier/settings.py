@@ -118,6 +118,15 @@ class TrainingRunConfig(BaseModel):
     max_prompt_length: int | None = None
     max_completion_length: int | None = None
     generations_per_prompt: int | None = None
+    learning_rate: float | None = None
+    adam_beta1: float | None = None
+    adam_beta2: float | None = None
+    weight_decay: float | None = None
+    warmup_ratio: float | None = None
+    lr_scheduler_type: str | None = None
+    optim: str | None = None
+    max_grad_norm: float | None = None
+    save_steps: int | None = None
     reward_weights: dict[str, float] = Field(default_factory=dict)
     min_train_samples: int | None = None
     behavior_similarity_threshold: float | None = None
