@@ -34,3 +34,5 @@ class PredictionRecord(BaseModel):
     sample_id: str
     system: str
     output: ClarifiedFunctionOutput
+    raw_text: str | None = None
+    json_valid: bool = True

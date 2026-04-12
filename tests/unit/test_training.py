@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import types
+from contextlib import suppress
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 
@@ -13,15 +14,17 @@ import pytest
 # decide between .dll / .so / .dylib, and the windows_guard monkeypatch
 # briefly makes it return "Darwin", which would cause torch to look for
 # libtorch_global_deps.dylib on Windows.
-try:
+with suppress(ImportError):
     import torch as _torch_preload  # noqa: F401
-except ImportError:
-    pass
 
 from decomp_clarifier.adapters.compiler_clang import resolve_clang_executable
 from decomp_clarifier.evaluation.behavior_eval import behavior_similarity
 from decomp_clarifier.schemas.model_io import ClarifiedFunctionOutput
-from decomp_clarifier.training.grpo.data import load_rl_records, prompt_from_record, reward_fields_from_record
+from decomp_clarifier.training.grpo.data import (
+    load_rl_records,
+    prompt_from_record,
+    reward_fields_from_record,
+)
 from decomp_clarifier.training.grpo.rewards import (
     behavior_reward,
     cleanup_reward,
@@ -35,15 +38,24 @@ from decomp_clarifier.training.grpo.rewards import (
 from decomp_clarifier.training.grpo.train import compute_completion_reward
 from decomp_clarifier.training.grpo.verifier import verify_output
 from decomp_clarifier.training.sft.callbacks import write_training_summary
-from decomp_clarifier.training.sft.data import combine_prompt_and_response, load_sft_records
+from decomp_clarifier.training.sft.data import (
+    combine_prompt_and_response,
+    load_sft_records,
+)
 from decomp_clarifier.training.utils.hardware import detect_hardware
 from decomp_clarifier.training.utils.memory_profiles import select_memory_profile
 from decomp_clarifier.training.utils.trl_compat import (
     ensure_model_warnings_issued,
     normalize_optional_flag,
 )
-from decomp_clarifier.training.utils.version_lock import collect_versions, validate_version_lock
-from decomp_clarifier.training.windows_guard import TrainingEnvironmentError, ensure_windows_cuda
+from decomp_clarifier.training.utils.version_lock import (
+    collect_versions,
+    validate_version_lock,
+)
+from decomp_clarifier.training.windows_guard import (
+    TrainingEnvironmentError,
+    ensure_windows_cuda,
+)
 
 _ORIGINAL_METADATA_VERSION = importlib_metadata.version
 
@@ -174,7 +186,10 @@ def test_training_utilities_and_rewards(
 
     assert behavior_similarity("int helper(void) { return 0; }", "") == 0.0
     compile_only_reward = compute_completion_reward(
-        completion='{"summary":"ok","confidence":1.0,"renamings":{},"cleaned_c":"int helper(void){ printf(\\"hi\\\\n\\"); return 0; }"}',
+        completion=(
+            '{"summary":"ok","confidence":1.0,"renamings":{},'
+            '"cleaned_c":"int helper(void){ printf(\\"hi\\\\n\\"); return 0; }"}'
+        ),
         raw_code='int helper(void){ undefined8 local_10; printf("hi\\n"); return 0; }',
         compile_reference_source='#include <stdio.h>\nint helper(void) { return 0; }\n',
         target_clean_code="int helper(void) { return 0; }",
@@ -194,7 +209,10 @@ def test_training_utilities_and_rewards(
     assert compile_only_reward == (1.0 if resolve_clang_executable("clang") is not None else 0.0)
 
     assert compute_completion_reward(
-        completion='{"summary":"x","confidence":0.5,"renamings":{},"cleaned_c":"int f(void){return 0;}"}',
+        completion=(
+            '{"summary":"x","confidence":0.5,"renamings":{},'
+            '"cleaned_c":"int f(void){return 0;}"}'
+        ),
         raw_code="",
         compile_reference_source="",
         target_clean_code="",

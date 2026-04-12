@@ -21,22 +21,26 @@ What the repo can validate end to end today:
 - baseline prediction generation
 - baseline evaluation/report generation
 - SFT training
+- SFT checkpoint evaluation
 - GRPO training
+- GRPO checkpoint evaluation
 - training telemetry artifacts
 
 What is not fully wired today:
 
-- there is no trained-model inference CLI yet
-- there is no CLI path that evaluates an SFT or GRPO checkpoint against the baseline report
 - `train-grpo` does not automatically consume the latest SFT checkpoint
 - hardware overlay configs under `configs/training/windows_cuda_*.yaml` are not auto-merged by the CLI
+- there is no single command that directly compares `SFT` vs `GRPO` in one combined report
+- checkpoint evaluation requires a finished checkpoint directory with saved adapter/model files
 
 Because of that, the practical meaning of "full pipeline" right now is:
 
 1. build the dataset and baseline report
 2. run SFT
-3. run GRPO
-4. verify the training artifacts and telemetry
+3. evaluate the SFT checkpoint
+4. run GRPO
+5. evaluate the GRPO checkpoint
+6. compare the checkpoint reports and manual inspection samples
 
 ## Recommended Run Sizes
 
@@ -341,7 +345,8 @@ Success criteria:
 
 Important note:
 
-This evaluation path currently scores baseline predictions only. It does not yet score trained checkpoints.
+This `eval` path scores baseline predictions only. Trained checkpoints use
+`eval-sft-checkpoint` and `eval-grpo-checkpoint`.
 
 ### 7. Run SFT
 
@@ -383,6 +388,62 @@ Success criteria:
 - `sft_metrics.jsonl` and `sft_metrics.csv` exist and are non-empty
 - `sft_loss.png` exists
 - loss does not immediately diverge to `nan`
+
+### 7.5 Evaluate The SFT Checkpoint
+
+After SFT finishes, evaluate the checkpoint on the held-out split:
+
+```powershell
+python -m decomp_clarifier.cli eval-sft-checkpoint --split val
+```
+
+PowerShell wrapper:
+
+```powershell
+.\scripts\eval_sft_checkpoint.ps1 -Split val
+```
+
+If you want to evaluate a specific finished checkpoint instead of the latest one:
+
+```powershell
+python -m decomp_clarifier.cli eval-sft-checkpoint `
+  --checkpoint-dir artifacts/runs/train-sft-YYYYMMDD-HHMMSS/model `
+  --split val
+```
+
+Outputs under `artifacts/runs/eval-sft-checkpoint-<timestamp>/`:
+
+- `checkpoint_eval_manifest.json`
+- `predictions.jsonl`
+- `sample_evaluations.jsonl`
+- `reports/`
+- `comparison.md`
+- `inspection_samples.md`
+- `inspection_samples.jsonl`
+
+Manual inspection file:
+
+- `inspection_samples.md` shows:
+  - original source
+  - Ghidra decompiled code
+  - reconstructed checkpoint output
+  - verifier metrics for each sample
+
+Recommended manual check:
+
+```powershell
+$latest = Get-ChildItem artifacts\runs\eval-sft-checkpoint-* | Sort-Object LastWriteTime | Select-Object -Last 1
+Get-Content (Join-Path $latest.FullName 'checkpoint_eval_manifest.json')
+Get-Content (Join-Path $latest.FullName 'comparison.md')
+Get-Content (Join-Path $latest.FullName 'inspection_samples.md') | Select-Object -First 120
+```
+
+Success criteria:
+
+- `predictions.jsonl` and `sample_evaluations.jsonl` exist and are non-empty
+- `comparison.md` includes checkpoint metrics and, if available, latest baseline metrics
+- `inspection_samples.md` contains readable examples with source/decompiled/reconstructed sections
+- the checkpoint is at least competitive with `prompt_only_cleanup` on the held-out split
 
 ### 8. Point GRPO at the SFT Checkpoint
 
@@ -459,6 +520,54 @@ Success criteria:
 - `reward_mean` is being recorded in `grpo_metrics.jsonl`
 - rewards are not flat zero for the entire run
 
+### 9.5 Evaluate The GRPO Checkpoint
+
+After GRPO finishes, evaluate the checkpoint on the held-out split:
+
+```powershell
+python -m decomp_clarifier.cli eval-grpo-checkpoint --split val
+```
+
+PowerShell wrapper:
+
+```powershell
+.\scripts\eval_grpo_checkpoint.ps1 -Split val
+```
+
+If you want to evaluate a specific finished checkpoint instead of the latest one:
+
+```powershell
+python -m decomp_clarifier.cli eval-grpo-checkpoint `
+  --checkpoint-dir artifacts/runs/train-grpo-YYYYMMDD-HHMMSS/model `
+  --split val
+```
+
+Outputs under `artifacts/runs/eval-grpo-checkpoint-<timestamp>/` mirror the SFT evaluation artifacts:
+
+- `checkpoint_eval_manifest.json`
+- `predictions.jsonl`
+- `sample_evaluations.jsonl`
+- `reports/`
+- `comparison.md`
+- `inspection_samples.md`
+- `inspection_samples.jsonl`
+
+Recommended manual check:
+
+```powershell
+$latest = Get-ChildItem artifacts\runs\eval-grpo-checkpoint-* | Sort-Object LastWriteTime | Select-Object -Last 1
+Get-Content (Join-Path $latest.FullName 'checkpoint_eval_manifest.json')
+Get-Content (Join-Path $latest.FullName 'comparison.md')
+Get-Content (Join-Path $latest.FullName 'inspection_samples.md') | Select-Object -First 120
+```
+
+Success criteria:
+
+- the GRPO eval artifacts are present and non-empty
+- `comparison.md` shows no obvious collapse versus the baseline reference
+- `inspection_samples.md` contains both good and bad examples you can inspect manually
+- GRPO is not materially worse than SFT on compile or behavior-oriented verifier fields
+
 ## What "Success" Looks Like
 
 ### Pipeline health success
@@ -471,7 +580,9 @@ You can consider the pipeline healthy if all of the following are true:
 - dataset files are non-empty
 - baseline report is generated
 - SFT finishes and emits telemetry
+- SFT checkpoint evaluation runs and writes reports plus inspection samples
 - GRPO finishes and emits telemetry
+- GRPO checkpoint evaluation runs and writes reports plus inspection samples
 
 ### First meaningful experiment success
 
@@ -499,21 +610,31 @@ For the current codebase, training success should be judged primarily by:
 
 ## What You Still Need To Verify Manually
 
-Because there is no trained-model evaluation CLI yet, this repo does not currently give you an automatic "SFT beat baseline" or "GRPO beat SFT" report.
+The repo now gives you checkpoint evaluation commands, but you still need to
+manually inspect the examples and compare `SFT` vs `GRPO`.
 
-So after the first full manual run, the next reasonable manual follow-up is:
+Recommended manual follow-up after both evaluations:
 
 1. keep the baseline report as your reference point
-2. inspect SFT and GRPO telemetry
-3. run a small custom inference script or notebook against held-out samples
+2. open the latest `comparison.md` from the SFT eval run
+3. open the latest `comparison.md` from the GRPO eval run
 4. compare:
-   - JSON validity
-   - placeholder cleanup
-   - rename quality
-   - compile proxy success
-   - readability
+   - compile success
+   - behavior success
+   - readability score
+   - naming score
+   - placeholder ratio
+5. read both `inspection_samples.md` files and compare the reconstructed code quality
+6. if the validation split looks good, rerun both checkpoint eval commands on `--split test` once
 
-If you want that final comparison to be repeatable, the next engineering step should be a dedicated trained-checkpoint inference/eval CLI.
+Important note:
+
+- there is still no one-shot CLI that produces a single combined `baseline vs SFT vs GRPO`
+  report in one run
+- the intended manual workflow is:
+  - baseline report from `eval`
+  - SFT checkpoint report from `eval-sft-checkpoint`
+  - GRPO checkpoint report from `eval-grpo-checkpoint`
 
 ## Short Command List
 
@@ -533,5 +654,7 @@ python -m decomp_clarifier.cli run-baselines
 python -m decomp_clarifier.cli eval
 python -m decomp_clarifier.cli report
 python -m decomp_clarifier.cli train-sft
+python -m decomp_clarifier.cli eval-sft-checkpoint --split val
 python -m decomp_clarifier.cli train-grpo --training-profile grpo_qwen35_2b_12gb_from_sft
+python -m decomp_clarifier.cli eval-grpo-checkpoint --split val
 ```

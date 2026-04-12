@@ -156,6 +156,7 @@ Current training stages:
 4. The intended next gate is to compare the SFT checkpoint against raw and prompt-only baselines before starting RL.
 5. `train-grpo` reuses the packed records, extracts the prompt field, generates multiple completions per prompt, and scores them with the weighted reward stack above.
 6. `train-sft` writes loss telemetry, and `train-grpo` writes reward telemetry, as JSONL/CSV logs plus TensorBoard and PNG artifacts.
+7. `eval-sft-checkpoint` and `eval-grpo-checkpoint` load a finished checkpoint, generate predictions over a held-out split, score them with the verifier stack, and write side-by-side inspection samples.
 
 Current SFT defaults in `configs/training/sft_qwen35_2b_12gb.yaml`:
 
@@ -275,9 +276,26 @@ python -m decomp_clarifier.cli doctor
 python -m decomp_clarifier.cli doctor --training
 python -m decomp_clarifier.cli train-sft
 python -m decomp_clarifier.cli train-grpo
+python -m decomp_clarifier.cli eval-sft-checkpoint
+python -m decomp_clarifier.cli eval-grpo-checkpoint
 ```
 
 Training commands are intentionally guarded and will fail fast on unsupported environments. On Windows CUDA hosts, `doctor --training` validates the stack before you start a long run.
+
+Checkpoint evaluation writes:
+
+- `predictions.jsonl`
+- `sample_evaluations.jsonl`
+- report markdown/html/json
+- `comparison.md` against the latest baseline run when available
+- `inspection_samples.md` and `inspection_samples.jsonl` with original source, Ghidra decompilation, and reconstructed output
+
+Windows convenience wrappers:
+
+```powershell
+.\scripts\eval_sft_checkpoint.ps1
+.\scripts\eval_grpo_checkpoint.ps1
+```
 
 ## Phase Coverage
 

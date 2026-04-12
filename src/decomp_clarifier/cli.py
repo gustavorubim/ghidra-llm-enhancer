@@ -147,6 +147,12 @@ def _run_grpo_training(*args: Any, **kwargs: Any) -> Path:
     return run_grpo_training(*args, **kwargs)
 
 
+def _run_checkpoint_evaluation(*args: Any, **kwargs: Any) -> Any:
+    from decomp_clarifier.evaluation.checkpoint_eval import run_checkpoint_evaluation
+
+    return run_checkpoint_evaluation(*args, **kwargs)
+
+
 @app.command("doctor")
 def doctor(
     training: bool = typer.Option(
@@ -554,6 +560,124 @@ def train_grpo(
     )
     logger.info("completed train-grpo manifest=%s", manifest)
     typer.echo(str(manifest))
+
+
+@app.command("eval-sft-checkpoint")
+def eval_sft_checkpoint(
+    checkpoint_dir: Path | None = typer.Option(None),  # noqa: B008
+    training_profile: str = typer.Option("sft_qwen35_2b_12gb"),
+    split: str = typer.Option("val"),
+    sample_limit: int | None = typer.Option(None),
+    inspection_sample_count: int = typer.Option(8),
+    max_new_tokens: int = typer.Option(384),
+    temperature: float = typer.Option(0.0),
+    app_profile: str = typer.Option("default"),
+) -> None:
+    from decomp_clarifier.evaluation.checkpoint_eval import find_latest_completed_checkpoint
+
+    root, paths, run_id, run_dir, logger, app_config = _bootstrap(
+        "eval-sft-checkpoint", app_profile=app_profile
+    )
+    resolved_checkpoint = (
+        paths.resolve(checkpoint_dir)
+        if checkpoint_dir is not None
+        else find_latest_completed_checkpoint(paths, "sft")
+    )
+    logger.info(
+        "starting eval-sft-checkpoint run_id=%s checkpoint=%s split=%s",
+        run_id,
+        resolved_checkpoint,
+        split,
+    )
+    artifacts = _run_checkpoint_evaluation(
+        root=root,
+        paths=paths,
+        run_id=run_id,
+        run_dir=run_dir,
+        stage="sft",
+        checkpoint_dir=resolved_checkpoint,
+        training_profile=training_profile,
+        split=split,
+        sample_limit=sample_limit,
+        inspection_sample_count=inspection_sample_count,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+    )
+    _write_resolved(
+        run_dir / "resolved_config.yaml",
+        {
+            "app": app_config.model_dump(mode="python"),
+            "stage": "sft",
+            "checkpoint_dir": str(resolved_checkpoint),
+            "training_profile": training_profile,
+            "split": split,
+            "sample_limit": sample_limit,
+            "inspection_sample_count": inspection_sample_count,
+            "max_new_tokens": max_new_tokens,
+            "temperature": temperature,
+        },
+    )
+    logger.info("completed eval-sft-checkpoint manifest=%s", artifacts.manifest_path)
+    typer.echo(str(artifacts.manifest_path))
+
+
+@app.command("eval-grpo-checkpoint")
+def eval_grpo_checkpoint(
+    checkpoint_dir: Path | None = typer.Option(None),  # noqa: B008
+    training_profile: str = typer.Option("grpo_qwen35_2b_12gb"),
+    split: str = typer.Option("val"),
+    sample_limit: int | None = typer.Option(None),
+    inspection_sample_count: int = typer.Option(8),
+    max_new_tokens: int = typer.Option(256),
+    temperature: float = typer.Option(0.0),
+    app_profile: str = typer.Option("default"),
+) -> None:
+    from decomp_clarifier.evaluation.checkpoint_eval import find_latest_completed_checkpoint
+
+    root, paths, run_id, run_dir, logger, app_config = _bootstrap(
+        "eval-grpo-checkpoint", app_profile=app_profile
+    )
+    resolved_checkpoint = (
+        paths.resolve(checkpoint_dir)
+        if checkpoint_dir is not None
+        else find_latest_completed_checkpoint(paths, "grpo")
+    )
+    logger.info(
+        "starting eval-grpo-checkpoint run_id=%s checkpoint=%s split=%s",
+        run_id,
+        resolved_checkpoint,
+        split,
+    )
+    artifacts = _run_checkpoint_evaluation(
+        root=root,
+        paths=paths,
+        run_id=run_id,
+        run_dir=run_dir,
+        stage="grpo",
+        checkpoint_dir=resolved_checkpoint,
+        training_profile=training_profile,
+        split=split,
+        sample_limit=sample_limit,
+        inspection_sample_count=inspection_sample_count,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+    )
+    _write_resolved(
+        run_dir / "resolved_config.yaml",
+        {
+            "app": app_config.model_dump(mode="python"),
+            "stage": "grpo",
+            "checkpoint_dir": str(resolved_checkpoint),
+            "training_profile": training_profile,
+            "split": split,
+            "sample_limit": sample_limit,
+            "inspection_sample_count": inspection_sample_count,
+            "max_new_tokens": max_new_tokens,
+            "temperature": temperature,
+        },
+    )
+    logger.info("completed eval-grpo-checkpoint manifest=%s", artifacts.manifest_path)
+    typer.echo(str(artifacts.manifest_path))
 
 
 if __name__ == "__main__":

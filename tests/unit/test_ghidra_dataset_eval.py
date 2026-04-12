@@ -13,6 +13,11 @@ from decomp_clarifier.compilation.binary_inventory import binary_format_for_host
 from decomp_clarifier.dataset.packers import pack_rl_records, pack_sft_records, write_jsonl_records
 from decomp_clarifier.dataset.splitters import split_project_ids
 from decomp_clarifier.evaluation.behavior_eval import behavior_similarity, is_behavior_improvement
+from decomp_clarifier.evaluation.checkpoint_eval import (
+    evaluate_prediction_records,
+    select_inspection_items,
+    write_inspection_samples,
+)
 from decomp_clarifier.evaluation.compile_eval import compile_candidate
 from decomp_clarifier.evaluation.metrics import aggregate_metric, field_complete, placeholder_ratio
 from decomp_clarifier.evaluation.naming_eval import normalized_name_similarity
@@ -21,12 +26,14 @@ from decomp_clarifier.evaluation.report_builder import build_report, write_repor
 from decomp_clarifier.ghidra_export.aligner import align_functions
 from decomp_clarifier.ghidra_export.export_runner import GhidraExportRunner
 from decomp_clarifier.ghidra_export.parse_exports import parse_ghidra_export_dir
+from decomp_clarifier.inference.checkpoint_predictor import _encode_prompt, _text_tokenizer
 from decomp_clarifier.inference.explain import summarize_improvements
-from decomp_clarifier.inference.formatter import normalize_output
+from decomp_clarifier.inference.formatter import normalize_output, normalize_output_with_status
 from decomp_clarifier.inference.runner import InferenceRunner
 from decomp_clarifier.logging import configure_logging
 from decomp_clarifier.schemas.compiler import BinaryArtifact, CompileManifest
 from decomp_clarifier.schemas.evaluation import SampleEvaluation
+from decomp_clarifier.schemas.model_io import PredictionRecord
 
 
 def test_ghidra_adapter_builds_command(tmp_path: Path, temp_app_config, monkeypatch) -> None:
@@ -163,6 +170,9 @@ def test_baselines_inference_and_evaluation(sample_dataset_samples, tmp_path: Pa
         'prefix {"summary":"ok","confidence":1.0,'
         '"renamings":{},"cleaned_c":"int x(void){return 1;}"} suffix'
     )
+    fallback_output, json_valid = normalize_output_with_status("{not valid json")
+    assert not json_valid
+    assert fallback_output.cleaned_c == "{not valid json"
     runner = InferenceRunner(lambda _sample: output)
     assert runner.run([sample])[0].summary == "ok"
     assert summarize_improvements(sample, renamed)
@@ -188,6 +198,60 @@ def test_baselines_inference_and_evaluation(sample_dataset_samples, tmp_path: Pa
     assert markdown_path.exists()
     assert html_path.exists()
     assert json.loads(json_path.read_text(encoding="utf-8"))["run_id"] == "eval-test"
+
+    records = [
+        PredictionRecord(sample_id=sample.sample_id, system="sft_checkpoint", output=cleaned),
+        PredictionRecord(
+            sample_id=sample_dataset_samples[1].sample_id,
+            system="sft_checkpoint",
+            output=raw_ghidra.predict(sample_dataset_samples[1]),
+            json_valid=False,
+            raw_text="not json",
+        ),
+    ]
+    samples_by_id = {item.sample_id: item for item in sample_dataset_samples[:2]}
+    evaluations = evaluate_prediction_records(samples_by_id, records)
+    assert len(evaluations) == 2
+    inspection_items = select_inspection_items(
+        samples_by_id,
+        records,
+        evaluations,
+        limit=2,
+    )
+    inspection_md = tmp_path / "inspection.md"
+    inspection_jsonl = tmp_path / "inspection.jsonl"
+    write_inspection_samples(inspection_items, inspection_md, inspection_jsonl)
+    assert inspection_md.exists()
+    assert inspection_jsonl.exists()
+    assert "### Decompiled" in inspection_md.read_text(encoding="utf-8")
+
+
+def test_checkpoint_prompt_encoding_supports_processor_and_tokenizer() -> None:
+    class FakeTokenizer:
+        pad_token = None
+        eos_token = "<eos>"
+
+        def __call__(self, prompt, return_tensors):
+            assert prompt == "hello"
+            assert return_tensors == "pt"
+            return {"input_ids": "plain"}
+
+    class FakeProcessor:
+        def __init__(self) -> None:
+            self.tokenizer = FakeTokenizer()
+
+        def __call__(self, *, text, return_tensors):
+            assert text == "hello"
+            assert return_tensors == "pt"
+            return {"input_ids": "processor"}
+
+    tokenizer = FakeTokenizer()
+    processor = FakeProcessor()
+
+    assert _text_tokenizer(tokenizer) is tokenizer
+    assert _text_tokenizer(processor) is processor.tokenizer
+    assert _encode_prompt(tokenizer, "hello") == {"input_ids": "plain"}
+    assert _encode_prompt(processor, "hello") == {"input_ids": "processor"}
 
 
 def test_logging_splitters_and_inventory_branches(tmp_path: Path, monkeypatch) -> None:

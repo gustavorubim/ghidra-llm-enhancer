@@ -202,6 +202,17 @@ def test_cli_workflow_smoke(
     )
     monkeypatch.setattr(
         cli_module,
+        "_run_checkpoint_evaluation",
+        lambda **kwargs: type(
+            "Artifacts",
+            (),
+            {
+                "manifest_path": kwargs["run_dir"] / "checkpoint_eval_manifest.json",
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        cli_module,
         "build_doctor_report",
         lambda paths, include_training=False: {
             "python": {
@@ -262,6 +273,10 @@ def test_cli_workflow_smoke(
         "doctor_exit_code",
         lambda report, include_training=False: 0,
     )
+    monkeypatch.setattr(
+        "decomp_clarifier.evaluation.checkpoint_eval.find_latest_completed_checkpoint",
+        lambda paths, stage: temp_paths.runs_dir / f"train-{stage}-latest" / "model",
+    )
 
     dataset_file = temp_paths.processed_sft_dir / "function_dataset.jsonl"
     dataset_file.parent.mkdir(parents=True, exist_ok=True)
@@ -283,6 +298,8 @@ def test_cli_workflow_smoke(
     assert runner.invoke(app, ["demo"]).exit_code == 0
     assert runner.invoke(app, ["train-sft"]).exit_code == 0
     assert runner.invoke(app, ["train-grpo"]).exit_code == 0
+    assert runner.invoke(app, ["eval-sft-checkpoint"]).exit_code == 0
+    assert runner.invoke(app, ["eval-grpo-checkpoint"]).exit_code == 0
 
     baseline_predictions = sorted(
         temp_paths.runs_dir.glob("baseline-*/baseline_predictions.jsonl")
