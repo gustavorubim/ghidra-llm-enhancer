@@ -528,6 +528,8 @@ After GRPO finishes, evaluate the checkpoint on the held-out split:
 python -m decomp_clarifier.cli eval-grpo-checkpoint --split val
 ```
 
+That command now defaults to `384` decode tokens, which matches the GRPO rollout budget in the 12 GB profile.
+
 PowerShell wrapper:
 
 ```powershell

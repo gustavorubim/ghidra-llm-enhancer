@@ -3,7 +3,7 @@ param(
     [string]$TrainingProfile = "grpo_qwen35_2b_12gb",
     [string]$Split = "val",
     [int]$InspectionSampleCount = 8,
-    [int]$MaxNewTokens = 256,
+    [int]$MaxNewTokens = 384,
     [double]$Temperature = 0.0,
     [int]$SampleLimit = 0
 )

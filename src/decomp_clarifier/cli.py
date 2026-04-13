@@ -640,7 +640,7 @@ def eval_grpo_checkpoint(
     split: str = typer.Option("val"),
     sample_limit: int | None = typer.Option(None),
     inspection_sample_count: int = typer.Option(8),
-    max_new_tokens: int = typer.Option(256),
+    max_new_tokens: int = typer.Option(384),
     temperature: float = typer.Option(0.0),
     app_profile: str = typer.Option("default"),
 ) -> None:

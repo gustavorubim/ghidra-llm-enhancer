@@ -281,6 +281,7 @@ python -m decomp_clarifier.cli eval-grpo-checkpoint
 ```
 
 Training commands are intentionally guarded and will fail fast on unsupported environments. On Windows CUDA hosts, `doctor --training` validates the stack before you start a long run.
+`train-grpo` defaults to the latest completed SFT checkpoint when the profile leaves `base_model_id` unset, and `eval-grpo-checkpoint` now defaults to `384` decode tokens to match the GRPO rollout budget.
 
 Checkpoint evaluation writes:
 
