@@ -1,157 +1,197 @@
-# Autoresearch Loop — Instructions
+# Autoresearch Loop - Instructions
 
-The research loop runs GRPO experiments autonomously, keeping only changes
-that improve the composite eval score. It follows the ratchet pattern from
-karpathy/autoresearch adapted for this project's training cycle.
+This repository now uses an `autoresearch`-style GRPO loop.
+The goal is not to pre-enumerate hypotheses. The goal is to let the agent:
 
----
+- study the latest evidence
+- invent the next experiment
+- train and evaluate it
+- keep winners
+- discard losers
+- continue indefinitely
 
-## Prerequisites
+The source of truth for that behavior is `research/program.md`.
 
-Before starting the loop, all three conditions must be true:
+## What changed
 
-1. **SFT checkpoint is working.** A recent SFT run exists at
-   `artifacts/runs/train-sft-*/model/` with `json_valid_rate > 0.7` on eval.
+The old setup behaved like a config sweep.
+The new setup behaves like `karpathy/autoresearch`:
 
-2. **GRPO code is wired.** `configs/training/grpo_qwen35_2b_12gb.yaml` has
-   `model.sft_checkpoint_dir` pointing to the SFT checkpoint directory.
+- the agent creates hypotheses on its own
+- the agent may edit a bounded set of real GRPO system files
+- the first run establishes the baseline automatically
+- the champion is the current `autoresearch/<tag>` branch head
+- each experiment runs on a temporary candidate branch
+- keep/discard decisions happen after training plus scout/confirm eval
 
-3. **Baseline is populated.** Run one clean GRPO train + eval manually,
-   then update `research/baseline.json` with the real score and run IDs.
-   See "Initializing the baseline" below.
+## Before you start
 
----
+Make sure all of these are true:
 
-## Initializing the baseline
+1. You are on a Windows CUDA machine that can run the GRPO path.
+2. A working SFT checkpoint already exists.
+3. `data/processed/rl/rl_records.jsonl` exists.
+4. The project `.venv` is active.
 
-Run once manually before starting the loop:
+Optional sanity checks:
 
-```bash
-# 1. Train
-decomp-clarifier train-grpo --profile grpo_qwen35_2b_12gb
-
-# 2. Eval
-decomp-clarifier eval-grpo-checkpoint --split val --sample-limit 50
-
-# 3. Read the manifest
-#    artifacts/runs/eval-grpo-checkpoint-<latest>/checkpoint_eval_manifest.json
-#    Compute: score = json_valid_rate*0.5 + readability_score*0.3 + compile_success_rate*0.2
+```powershell
+python -m decomp_clarifier.cli train-grpo --help
+python -m decomp_clarifier.cli eval-grpo-checkpoint --help
 ```
-
-Then edit `research/baseline.json`:
-- Set `score` to the computed value
-- Set `json_valid_rate`, `readability_score`, `compile_success_rate` from the manifest
-- Set `train_run_id` and `eval_run_id` to the run IDs
-- Set `timestamp` to now (ISO 8601)
-- Remove the `note` field
-
-The loop will not keep any experiment that does not beat this number by 0.02.
-
----
 
 ## Starting the loop
 
-Open a Claude Code session in this repository and run:
+Open the agent in this repository and point it at `research/program.md`.
 
+Example kickoff prompt:
+
+```text
+Read research/program.md and start the GRPO autoresearch loop.
+Do the setup if needed, establish the baseline automatically if none exists,
+and then continue running experiments without asking for permission.
 ```
-/loop Follow the research protocol in research/program.md to run the next
-iteration of the GRPO autoresearch loop. Self-pace using ScheduleWakeup:
-3900s during training, 700s during eval, 60s between iterations.
-```
 
-The agent will:
-1. Read `research/program.md` for the protocol
-2. Read `research/experiment_log.jsonl` for history
-3. Propose and apply one config change
-4. Run training (~60 min), sleep via ScheduleWakeup
-5. Run eval (~10 min), sleep via ScheduleWakeup
-6. Keep or revert the change
-7. Log to `experiment_log.jsonl`
-8. Repeat from step 1
+If your agent runtime supports sleeping or wakeups, let it sleep during long
+training and evaluation runs instead of polling.
 
----
+## Branch model
 
-## Steering the loop
+The loop uses two branch types:
 
-Edit `research/program.md` between iterations to change direction. Changes
-are picked up at the next iteration start (step 1 above). Common edits:
+- champion branch: `autoresearch/<tag>`
+- temporary branch per experiment: `autoresearch-tmp/<tag>-<iteration>`
 
-**Focus on a specific variable:**
-Add a note to the "Current research focus" section at the bottom of
-`program.md`. Example: "Prioritize exploring learning_rate values next."
+The champion branch is the current best system.
+Each candidate branch contains one experimental idea.
 
-**Add a new candidate value:**
-Add it to the relevant candidates list in the Search space section.
+When a candidate wins, the champion branch fast-forwards to it.
+When a candidate loses, the temporary branch is deleted and the champion stays
+where it is.
 
-**Remove a candidate from consideration:**
-Delete it from the list. Candidates already logged in experiment_log.jsonl
-as REVERTED are automatically skipped regardless.
+## Files to watch
 
-**Change the metric:**
-Edit the score formula in the Goal section. This takes effect on the next
-eval comparison — it does not retroactively reweight past experiments.
+These files matter during the loop:
 
-**Change the ratchet threshold:**
-Edit the `0.02` in the Ratchet rule section.
+| File | Purpose |
+|------|---------|
+| `research/program.md` | Agent constitution and experiment rules |
+| `research/instructions.md` | Human quick-start and control notes |
+| `research/experiment_log.jsonl` | Ledger of every baseline, keep, discard, and crash |
+| `research/baseline.json` | Convenience mirror of current champion metrics |
+| `artifacts/runs/train-grpo-*/model/grpo_training_manifest.json` | Training run outcome |
+| `artifacts/runs/eval-grpo-checkpoint-*/checkpoint_eval_manifest.json` | Eval metrics |
+| `artifacts/runs/eval-grpo-checkpoint-*/comparison.md` | Side-by-side summary |
+| `artifacts/runs/eval-grpo-checkpoint-*/inspection_samples.*` | Concrete examples |
 
----
+## What the agent is allowed to change
+
+The loop may edit only this bounded experiment surface:
+
+- `configs/training/grpo_qwen35_2b_12gb.yaml`
+- `src/decomp_clarifier/training/grpo/rewards.py`
+- `src/decomp_clarifier/training/grpo/train.py`
+- `src/decomp_clarifier/training/grpo/data.py`
+- `src/decomp_clarifier/dataset/prompt_formatter.py`
+- `src/decomp_clarifier/dataset/packers.py`
+
+This is the local equivalent of `train.py` in Karpathy's repo: small, real,
+and sufficient to change GRPO behavior meaningfully.
+
+## What the agent must not change
+
+The loop must not edit:
+
+- evaluation code and report code
+- dataset artifacts
+- environment or dependency setup
+- SFT code outside the bounded RL prompt/data path
+- hardware safety settings that would make experiments incomparable
 
 ## Stopping the loop
 
-Add a `## STOP` section at the very top of `research/program.md`:
+To stop cleanly, edit the top of `research/program.md` so the `## STOP`
+section says `Status: stop` and includes a real stop reason.
+
+Example:
 
 ```markdown
 ## STOP
 
-Reason: <your reason here>
+Status: stop
+Reason: pause experiments and review the current champion manually
 ```
 
-The agent checks for this at the start of every iteration and halts cleanly
-after logging the current state.
+The agent should stop at the start of the next iteration after logging its
+state.
 
-Alternatively, close the Claude Code session. The loop does not run
-independently — it only executes when the agent is active.
+Closing the agent session also stops the loop.
 
----
+## Steering the loop
+
+Do not add giant search grids.
+Instead, steer strategy by editing the high-level guidance in
+`research/program.md`.
+
+Good steering edits:
+
+- "Prioritize reward-gate experiments before prompt-packing experiments."
+- "Allow more aggressive prompt compaction this evening."
+- "Focus on reducing compile regressions from invented helper calls."
+- "Stop exploring readability-only wins unless compile and behavior stay flat."
+
+Bad steering edits:
+
+- long candidate tables for every scalar
+- hand-authored fixed experiment order
+- instructions that prevent the agent from inventing its own next step
 
 ## Reading results
 
-**Quick summary:** read `research/experiment_log.jsonl`. Each line is one
-experiment. `result: KEPT` means the config improved; `result: REVERTED`
-means it did not.
+Use these views:
 
-**Best config so far:** `research/baseline.json` always reflects the
-current best. The `config_snapshot` inside it shows what values produced
-that score.
+- `research/experiment_log.jsonl`: one line per experiment
+- `research/baseline.json`: current champion summary
+- latest `comparison.md`: compact metric table
+- latest `inspection_samples.md` or `.jsonl`: concrete wins and failures
 
-**Detailed eval reports:** each `eval-grpo-checkpoint` run writes an HTML
-report to `artifacts/runs/eval-grpo-checkpoint-*/reports/`.
+The git branch also matters:
 
-**Git history:** every KEPT experiment is a commit with the message
-`research: keep <variable>=<value> score=<X.XXX>`. Run `git log --oneline`
-to see the improvement trajectory.
+- `autoresearch/<tag>` is the winning line of descent
+- temporary branches are disposable
 
----
+## Throughput expectations
 
-## Expected throughput
+This repo is slower than Karpathy's 5-minute trainer.
+On the current GRPO path, a full experiment is much more expensive.
 
-| GPU | Time per experiment | Experiments per night (8 h) |
-|-----|--------------------|-----------------------------|
-| 12 GB (current) | ~70 min | ~6 |
-| 24 GB | ~45 min | ~10 |
+Approximate cadence on the current 12 GB profile:
 
-The search space has roughly 40 candidate (variable, value) pairs. A full
-sweep takes 5–7 nights. In practice the loop will find improvements early
-and converge before exhausting all candidates.
+- training: about 60 minutes
+- scout eval: about 10 minutes
+- confirm eval: additional time only for promising candidates
 
----
+So the loop is still autonomous, but it is lower-throughput and more
+expensive per idea. That is why the constitution uses:
 
-## File reference
+- a bounded edit surface
+- evidence-driven hypotheses
+- a scout/confirm eval flow
+- fast discard of weak candidates
 
-| File | Written by | Purpose |
-|------|-----------|---------|
-| `research/program.md` | Human | Research constitution — steer here |
-| `research/baseline.json` | Human + agent | Current best score and config snapshot |
-| `research/experiment_log.jsonl` | Agent | One line per completed experiment |
-| `research/instructions.md` | Human | This file |
-| `configs/training/grpo_qwen35_2b_12gb.yaml` | Agent (reverted if no improvement) | Active GRPO config |
+## Notes on legacy files
+
+`research/baseline.json` and `research/experiment_log.jsonl` already exist in
+the repo. The new loop still uses them, but only as ledgers.
+
+- `baseline.json` is not the code source of truth
+- the champion branch head is the true baseline
+- the first run overwrites the old zero baseline automatically
+
+## Reference
+
+This setup is intentionally modeled after `karpathy/autoresearch`, but adapted
+to this repository's GRPO pipeline and current CLI:
+
+- upstream repo: https://github.com/karpathy/autoresearch
+- upstream constitution: https://raw.githubusercontent.com/karpathy/autoresearch/master/program.md

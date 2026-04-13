@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -37,7 +39,7 @@ from decomp_clarifier.schemas.compiler import CompileManifest
 from decomp_clarifier.schemas.dataset import FunctionDatasetSample
 from decomp_clarifier.schemas.evaluation import ReportExample, SampleEvaluation
 from decomp_clarifier.schemas.generation import GeneratedProject
-from decomp_clarifier.schemas.model_io import PredictionRecord
+from decomp_clarifier.schemas.model_io import ClarifiedFunctionOutput, PredictionRecord
 from decomp_clarifier.settings import (
     AppConfig,
     CompileConfig,
@@ -98,6 +100,205 @@ def _warn_if_clang_missing(logger: Any, command_name: str) -> None:
         "samples in %s. Install clang or add it to PATH to get real compile metrics.",
         command_name,
     )
+
+
+def _make_openrouter_client(*, api_key: str, base_url: str, cache_root: Path) -> OpenRouterClient:
+    return OpenRouterClient(
+        api_key=api_key,
+        base_url=base_url,
+        cache=FilesystemCache(cache_root),
+    )
+
+
+def _baseline_record(
+    *,
+    sample: FunctionDatasetSample,
+    system: str,
+    output: ClarifiedFunctionOutput,
+    raw_text: str | None = None,
+    json_valid: bool = True,
+) -> PredictionRecord:
+    return PredictionRecord(
+        sample_id=sample.sample_id,
+        system=system,
+        output=output,
+        raw_text=raw_text,
+        json_valid=json_valid,
+    )
+
+
+def _progress_interval(sample_count: int) -> int:
+    if sample_count <= 10:
+        return 1
+    return max(1, sample_count // 10)
+
+
+def _run_output_baseline_system(
+    samples: list[FunctionDatasetSample],
+    *,
+    system: str,
+    predictor: Any,
+    logger: Any | None = None,
+    max_workers: int = 1,
+) -> list[PredictionRecord]:
+    sample_count = len(samples)
+    interval = _progress_interval(sample_count)
+    started_at = time.perf_counter()
+    if logger is not None:
+        logger.info(
+            "starting baseline system=%s samples=%s workers=%s",
+            system,
+            sample_count,
+            max_workers,
+        )
+    records: list[PredictionRecord] = []
+
+    def predict_one(sample: FunctionDatasetSample) -> PredictionRecord:
+        return _baseline_record(sample=sample, system=system, output=predictor(sample))
+
+    if max_workers > 1 and sample_count > 1:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for index, record in enumerate(executor.map(predict_one, samples), start=1):
+                records.append(record)
+                if logger is not None and (
+                    index == 1 or index == sample_count or index % interval == 0
+                ):
+                    elapsed = max(time.perf_counter() - started_at, 1e-9)
+                    logger.info(
+                        "baseline progress system=%s completed=%s/%s sample_id=%s elapsed=%.1fs rate=%.2f samples/s",
+                        system,
+                        index,
+                        sample_count,
+                        samples[index - 1].sample_id,
+                        elapsed,
+                        index / elapsed,
+                    )
+    else:
+        for index, sample in enumerate(samples, start=1):
+            records.append(predict_one(sample))
+            if logger is not None and (index == 1 or index == sample_count or index % interval == 0):
+                elapsed = max(time.perf_counter() - started_at, 1e-9)
+                logger.info(
+                    "baseline progress system=%s completed=%s/%s sample_id=%s elapsed=%.1fs rate=%.2f samples/s",
+                    system,
+                    index,
+                    sample_count,
+                    sample.sample_id,
+                    elapsed,
+                    index / elapsed,
+                )
+    if logger is not None:
+        elapsed = max(time.perf_counter() - started_at, 1e-9)
+        logger.info(
+            "finished baseline system=%s samples=%s elapsed=%.1fs rate=%.2f samples/s",
+            system,
+            sample_count,
+            elapsed,
+            sample_count / elapsed,
+        )
+    return records
+
+
+def _run_checkpoint_baseline_system(
+    samples: list[FunctionDatasetSample],
+    *,
+    system: str,
+    predictor: Any,
+    max_new_tokens: int,
+    temperature: float,
+    logger: Any | None = None,
+    max_workers: int = 1,
+) -> list[PredictionRecord]:
+    sample_count = len(samples)
+    interval = _progress_interval(sample_count)
+    started_at = time.perf_counter()
+    if logger is not None:
+        logger.info(
+            "starting baseline system=%s samples=%s workers=%s",
+            system,
+            sample_count,
+            max_workers,
+        )
+    records: list[PredictionRecord] = []
+
+    def predict_one(sample: FunctionDatasetSample) -> PredictionRecord:
+        return predictor.predict(
+            sample,
+            system=system,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+        )
+
+    if max_workers > 1 and sample_count > 1:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for index, record in enumerate(executor.map(predict_one, samples), start=1):
+                records.append(record)
+                if logger is not None and (
+                    index == 1 or index == sample_count or index % interval == 0
+                ):
+                    elapsed = max(time.perf_counter() - started_at, 1e-9)
+                    logger.info(
+                        "baseline progress system=%s completed=%s/%s sample_id=%s elapsed=%.1fs rate=%.2f samples/s",
+                        system,
+                        index,
+                        sample_count,
+                        samples[index - 1].sample_id,
+                        elapsed,
+                        index / elapsed,
+                    )
+    else:
+        for index, sample in enumerate(samples, start=1):
+            records.append(
+                predict_one(sample)
+            )
+            if logger is not None and (index == 1 or index == sample_count or index % interval == 0):
+                elapsed = max(time.perf_counter() - started_at, 1e-9)
+                logger.info(
+                    "baseline progress system=%s completed=%s/%s sample_id=%s elapsed=%.1fs rate=%.2f samples/s",
+                    system,
+                    index,
+                    sample_count,
+                    sample.sample_id,
+                    elapsed,
+                    index / elapsed,
+                )
+    if logger is not None:
+        elapsed = max(time.perf_counter() - started_at, 1e-9)
+        logger.info(
+            "finished baseline system=%s samples=%s elapsed=%.1fs rate=%.2f samples/s",
+            system,
+            sample_count,
+            elapsed,
+            sample_count / elapsed,
+        )
+    return records
+
+
+def _ordered_baseline_predictions(
+    samples: list[FunctionDatasetSample],
+    system_predictions: dict[str, list[PredictionRecord]],
+) -> list[PredictionRecord]:
+    system_order = [
+        "raw_ghidra",
+        "naming_only",
+        "prompt_only_cleanup",
+        "generation_model",
+        "strong_model",
+        "base_qwen",
+    ]
+    sample_count = len(samples)
+    for system, records in system_predictions.items():
+        if len(records) != sample_count:
+            raise ValueError(
+                f"system {system} produced {len(records)} predictions for {sample_count} samples"
+            )
+    ordered: list[PredictionRecord] = []
+    for index in range(sample_count):
+        for system in system_order:
+            records = system_predictions.get(system)
+            if records is not None:
+                ordered.append(records[index])
+    return ordered
 
 
 def _compile_manifest_is_valid(compile_manifest: CompileManifest) -> bool:
@@ -438,6 +639,8 @@ def run_baselines(
     generation_model_id: str = typer.Option("openai/gpt-5.4-mini"),
     strong_model_id: str = typer.Option("openai/gpt-5.4-xhigh"),
     base_model_id: str | None = typer.Option(None),
+    sample_limit: int | None = typer.Option(None),
+    remote_workers: int = typer.Option(2, min=1),
 ) -> None:
     root, paths, run_id, run_dir, logger, app_config = _bootstrap(
         "baseline", app_profile=app_profile
@@ -445,39 +648,57 @@ def run_baselines(
     _warn_if_clang_missing(logger, "run-baselines")
     dataset_path = paths.processed_sft_dir / "function_dataset.jsonl"
     samples = _load_dataset_samples(dataset_path)
-    client = (
-        OpenRouterClient(
-            api_key=os.getenv("OPENROUTER_API_KEY"),
-            base_url=app_config.run.openrouter_base_url,
-            cache=FilesystemCache(paths.root / "data" / "cache" / "openrouter"),
-        )
-        if os.getenv("OPENROUTER_API_KEY")
-        else None
+    if sample_limit is not None:
+        samples = samples[:sample_limit]
+    logger.info(
+        "loaded baseline dataset samples=%s path=%s sample_limit=%s remote_workers=%s",
+        len(samples),
+        dataset_path,
+        sample_limit,
+        remote_workers,
     )
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    cache_root = paths.root / "data" / "cache" / "openrouter"
     baseline = PromptOnlyCleanupBaseline(
-        client=client,
+        client=(
+            _make_openrouter_client(
+                api_key=api_key,
+                base_url=app_config.run.openrouter_base_url,
+                cache_root=cache_root,
+            )
+            if api_key
+            else None
+        ),
         prompt_template=load_template(root / "configs" / "prompts" / "function_cleanup.md"),
         model=model_id,
     )
     generation_baseline = (
         PromptOnlyCleanupBaseline(
-            client=client,
+            client=_make_openrouter_client(
+                api_key=api_key,
+                base_url=app_config.run.openrouter_base_url,
+                cache_root=cache_root,
+            ),
             prompt_template=load_template(root / "configs" / "prompts" / "function_cleanup.md"),
             model=generation_model_id,
         )
-        if client is not None
+        if api_key
         else None
     )
     strong_baseline = (
         PromptOnlyCleanupBaseline(
-            client=client,
+            client=_make_openrouter_client(
+                api_key=api_key,
+                base_url=app_config.run.openrouter_base_url,
+                cache_root=cache_root,
+            ),
             prompt_template=load_template(root / "configs" / "prompts" / "function_cleanup.md"),
             model=strong_model_id,
         )
-        if client is not None
+        if api_key
         else None
     )
-    if client is None:
+    if api_key is None:
         logger.warning(
             "OPENROUTER_API_KEY not set; skipping generation_model and strong_model baselines."
         )
@@ -500,64 +721,102 @@ def run_baselines(
         except Exception as exc:  # noqa: BLE001
             logger.warning("skipping base_qwen baseline: %s", exc)
 
-    predictions: list[PredictionRecord] = []
-    for sample in samples:
-        predictions.append(
-            PredictionRecord(
-                sample_id=sample.sample_id,
-                system="raw_ghidra",
-                output=raw_ghidra.predict(sample),
-                raw_text=None,
-                json_valid=True,
-            )
+    system_predictions: dict[str, list[PredictionRecord]] = {
+        "raw_ghidra": _run_output_baseline_system(
+            samples,
+            system="raw_ghidra",
+            predictor=raw_ghidra.predict,
+            logger=logger,
+        ),
+        "naming_only": _run_output_baseline_system(
+            samples,
+            system="naming_only",
+            predictor=naming_only.predict,
+            logger=logger,
+        ),
+    }
+
+    pending_jobs: list[tuple[str, Any, dict[str, Any]]] = []
+    if api_key is None:
+        system_predictions["prompt_only_cleanup"] = _run_output_baseline_system(
+            samples,
+            system="prompt_only_cleanup",
+            predictor=baseline.predict,
+            logger=logger,
         )
-        predictions.append(
-            PredictionRecord(
-                sample_id=sample.sample_id,
-                system="naming_only",
-                output=naming_only.predict(sample),
-                raw_text=None,
-                json_valid=True,
-            )
-        )
-        predictions.append(
-            PredictionRecord(
-                sample_id=sample.sample_id,
-                system="prompt_only_cleanup",
-                output=baseline.predict(sample),
-                raw_text=None,
-                json_valid=True,
+    else:
+        pending_jobs.append(
+            (
+                "prompt_only_cleanup",
+                _run_output_baseline_system,
+                {
+                    "samples": samples,
+                    "system": "prompt_only_cleanup",
+                    "predictor": baseline.predict,
+                    "logger": logger,
+                    "max_workers": remote_workers,
+                },
             )
         )
         if generation_baseline is not None:
-            predictions.append(
-                PredictionRecord(
-                    sample_id=sample.sample_id,
-                    system="generation_model",
-                    output=generation_baseline.predict(sample),
-                    raw_text=None,
-                    json_valid=True,
+            pending_jobs.append(
+                (
+                    "generation_model",
+                    _run_output_baseline_system,
+                    {
+                        "samples": samples,
+                        "system": "generation_model",
+                        "predictor": generation_baseline.predict,
+                        "logger": logger,
+                        "max_workers": remote_workers,
+                    },
                 )
             )
         if strong_baseline is not None:
-            predictions.append(
-                PredictionRecord(
-                    sample_id=sample.sample_id,
-                    system="strong_model",
-                    output=strong_baseline.predict(sample),
-                    raw_text=None,
-                    json_valid=True,
+            pending_jobs.append(
+                (
+                    "strong_model",
+                    _run_output_baseline_system,
+                    {
+                        "samples": samples,
+                        "system": "strong_model",
+                        "predictor": strong_baseline.predict,
+                        "logger": logger,
+                        "max_workers": remote_workers,
+                    },
                 )
             )
-        if base_qwen_predictor is not None:
-            predictions.append(
-                base_qwen_predictor.predict(
-                    sample,
-                    system="base_qwen",
-                    max_new_tokens=384,
-                    temperature=0.0,
-                )
+    if base_qwen_predictor is not None:
+        pending_jobs.append(
+            (
+                "base_qwen",
+                _run_checkpoint_baseline_system,
+                {
+                    "samples": samples,
+                    "system": "base_qwen",
+                    "predictor": base_qwen_predictor,
+                    "max_new_tokens": 384,
+                    "temperature": 0.0,
+                    "logger": logger,
+                    "max_workers": 1,
+                },
             )
+        )
+
+    if pending_jobs:
+        logger.info(
+            "running %s expensive baseline systems in parallel: %s",
+            len(pending_jobs),
+            ", ".join(system for system, _fn, _kwargs in pending_jobs),
+        )
+        with ThreadPoolExecutor(max_workers=len(pending_jobs)) as executor:
+            futures = {
+                system: executor.submit(fn, **kwargs) for system, fn, kwargs in pending_jobs
+            }
+            for system, future in futures.items():
+                system_predictions[system] = future.result()
+
+    predictions = _ordered_baseline_predictions(samples, system_predictions)
     output_path = run_dir / "baseline_predictions.jsonl"
     output_path.write_text(
         "\n".join(record.model_dump_json() for record in predictions) + "\n",
