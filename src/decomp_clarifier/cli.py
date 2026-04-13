@@ -100,6 +100,13 @@ def _warn_if_clang_missing(logger: Any, command_name: str) -> None:
     )
 
 
+def _compile_manifest_is_valid(compile_manifest: CompileManifest) -> bool:
+    tests_ok = not compile_manifest.test_results or all(
+        result.passed for result in compile_manifest.test_results
+    )
+    return bool(compile_manifest.binaries) and tests_ok
+
+
 def _load_generated_projects(paths: ProjectPaths) -> list[GeneratedProject]:
     manifests = sorted(paths.generated_projects_dir.glob("*/project_manifest.json"))
     return [
@@ -227,6 +234,7 @@ def generate_projects(
         client=client,
         config=generation_config,
         prompt_template=load_template(root / "configs" / "prompts" / "project_generation.md"),
+        repair_prompt_template=load_template(root / "configs" / "prompts" / "project_repair.md"),
         project_root=paths.generated_projects_dir,
         manifest_root=paths.manifests_dir,
     )
@@ -236,6 +244,7 @@ def generate_projects(
     max_attempts = max(target_count * 5, target_count)
     projects: list[GeneratedProject] = []
     quarantined = 0
+    repaired = 0
     for attempt in range(max_attempts):
         if len(projects) >= target_count:
             break
@@ -245,16 +254,45 @@ def generate_projects(
             paths.generated_projects_dir,
             paths.binaries_dir,
         )
-        tests_ok = not compile_manifest.test_results or all(
-            result.passed for result in compile_manifest.test_results
-        )
-        if compile_manifest.binaries and tests_ok:
+        if _compile_manifest_is_valid(compile_manifest):
             projects.append(project)
             logger.info("validated generated project %s", project.project_id)
             continue
-        _quarantine_project(paths, project.project_id)
+        repaired_project = project
+        repair_succeeded = False
+        for repair_attempt in range(generation_config.generation.max_repair_attempts):
+            logger.info(
+                "repairing generated project %s after failed validation attempt=%s",
+                repaired_project.project_id,
+                repair_attempt + 1,
+            )
+            try:
+                repaired_project = generator.repair_project(
+                    repaired_project, compile_manifest, attempt=repair_attempt + 1
+                )
+            except Exception as exc:
+                logger.warning(
+                    "repair failed for generated project %s: %s",
+                    repaired_project.project_id,
+                    exc,
+                )
+                break
+            compile_manifest = build_runner.compile_project(
+                repaired_project,
+                paths.generated_projects_dir,
+                paths.binaries_dir,
+            )
+            if _compile_manifest_is_valid(compile_manifest):
+                projects.append(repaired_project)
+                repaired += 1
+                repair_succeeded = True
+                logger.info("validated repaired generated project %s", repaired_project.project_id)
+                break
+        if repair_succeeded:
+            continue
+        _quarantine_project(paths, repaired_project.project_id)
         quarantined += 1
-        logger.warning("quarantined invalid generated project %s", project.project_id)
+        logger.warning("quarantined invalid generated project %s", repaired_project.project_id)
     if len(projects) < target_count:
         raise RuntimeError(
             f"only generated {len(projects)} valid projects after {max_attempts} attempts"
@@ -262,6 +300,7 @@ def generate_projects(
     metrics = {
         "run_id": run_id,
         "generated_count": len(projects),
+        "repaired_count": repaired,
         "quarantined_count": quarantined,
         "attempt_count": len(projects) + quarantined,
         "project_ids": [project.project_id for project in projects],

@@ -27,7 +27,15 @@ def test_resolve_clang_probes_visual_studio_path_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clang_dir = (
-        tmp_path / "Microsoft Visual Studio" / "2022" / "Community" / "VC" / "Tools" / "Llvm" / "x64" / "bin"
+        tmp_path
+        / "Microsoft Visual Studio"
+        / "2022"
+        / "Community"
+        / "VC"
+        / "Tools"
+        / "Llvm"
+        / "x64"
+        / "bin"
     )
     clang_dir.mkdir(parents=True)
     fake_clang = clang_dir / "clang.exe"
@@ -49,3 +57,14 @@ def test_clang_compiler_error_mentions_override() -> None:
         _ = compiler.executable
 
     assert "configs/compile/*.yaml" in compiler_not_found_message("missing-clang")
+
+
+def test_build_command_adds_crt_define_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    compiler = ClangCompiler(CompilerProfile(executable="clang", extra_flags=["-Wall"]))
+    monkeypatch.setattr(compiler_clang.os, "name", "nt", raising=False)
+    compiler.__dict__["executable"] = "clang.exe"
+
+    command = compiler.build_command([Path("main.c")], Path("out.exe"))
+
+    assert "-D_CRT_SECURE_NO_WARNINGS" in command
+    assert "-Wall" in command

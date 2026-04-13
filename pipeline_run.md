@@ -172,6 +172,7 @@ What this does:
 - calls OpenRouter
 - validates each generated project structurally
 - compiles/tests it immediately
+- attempts one structured repair pass on compile/test failures
 - quarantines invalid projects
 - retries until it reaches the requested valid count or exhausts attempts
 
@@ -187,12 +188,14 @@ Get-Content (Join-Path $latest.FullName 'metrics.json')
 Success criteria:
 
 - `generated_count` equals your requested count
+- `repaired_count` is visible when the repair pass salvages a project
 - project directory count matches the requested count
 - each project has a `project_manifest.json`
 
 Watch for:
 
 - high `quarantined_count`
+- extremely high `repaired_count`, which usually means the base generation prompt/model is drifting
 - generation failing to reach the target count within `count * 5` attempts
 
 ### 2. Recompile All Saved Projects

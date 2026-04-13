@@ -20,8 +20,16 @@ from decomp_clarifier.generation.project_generator import ProjectGenerator
 from decomp_clarifier.generation.prompt_builder import (
     build_cleanup_prompt,
     build_project_generation_prompt,
+    build_project_repair_prompt,
 )
 from decomp_clarifier.generation.validators import ProjectValidationError, validate_project
+from decomp_clarifier.schemas.compiler import (
+    BinaryArtifact,
+    CompileManifest,
+)
+from decomp_clarifier.schemas.compiler import (
+    TestExecutionResult as CompilerTestExecutionResult,
+)
 from decomp_clarifier.schemas.model_io import PromptInput
 from decomp_clarifier.settings import GenerationConfig
 
@@ -139,6 +147,7 @@ def test_prompt_builder_and_project_generator(
         prompt_template=(
             "Topics: {topics}\nWeights: {difficulty_weights}\nValidation: {validation_rules}"
         ),
+        repair_prompt_template="Repair project.",
         project_root=tmp_path / "projects",
         manifest_root=tmp_path / "manifests",
     )
@@ -152,7 +161,12 @@ def test_project_generator_uniquifies_duplicate_project_ids(
 ) -> None:
     generation_config = GenerationConfig.model_validate(
         {
-            "model": {"model_id": "test-model", "fallback_models": [], "temperature": 0.2, "max_tokens": 10},
+            "model": {
+                "model_id": "test-model",
+                "fallback_models": [],
+                "temperature": 0.2,
+                "max_tokens": 10,
+            },
             "generation": {"project_count": 2},
             "validation": {
                 "min_source_files": 1,
@@ -171,7 +185,10 @@ def test_project_generator_uniquifies_duplicate_project_ids(
     generator = ProjectGenerator(
         client=FakeClient(),
         config=generation_config,
-        prompt_template="Topics: {topics}\nWeights: {difficulty_weights}\nValidation: {validation_rules}",
+        prompt_template=(
+            "Topics: {topics}\nWeights: {difficulty_weights}\nValidation: {validation_rules}"
+        ),
+        repair_prompt_template="Repair project.",
         project_root=tmp_path / "projects",
         manifest_root=tmp_path / "manifests",
     )
@@ -292,3 +309,40 @@ def test_openrouter_helper_functions() -> None:
         _content_text_from_body({"choices": [{"message": {"content": 123}}]})
     with pytest.raises(OpenRouterError):
         _json_from_text("not json")
+
+
+def test_build_project_repair_prompt_includes_failed_test_context(sample_project) -> None:
+    manifest = CompileManifest(
+        project_id=sample_project.project_id,
+        build_id="build-1",
+        compiler_family="clang",
+        compiler_version="clang 20",
+        host_os="windows",
+        binary_format="pe",
+        arch="amd64",
+        opt_level="O0",
+        source_root="src",
+        output_root="out",
+        binaries=[
+            BinaryArtifact(
+                path="out/sample_project.exe",
+                binary_format="pe",
+                arch="amd64",
+                stripped=False,
+            )
+        ],
+        test_results=[
+            CompilerTestExecutionResult(
+                name="counts_letters",
+                passed=False,
+                returncode=0,
+                stdout="5\n",
+                stderr="",
+            )
+        ],
+    )
+    prompt = build_project_repair_prompt("Repair the project.", sample_project, manifest)
+    assert "Repair the project." in prompt
+    assert '"name": "counts_letters"' in prompt
+    assert '"expected": "4"' in prompt
+    assert '"actual_stdout": "5\\n"' in prompt

@@ -287,6 +287,7 @@ python -m decomp_clarifier.cli eval-grpo-checkpoint
 
 Training commands are intentionally guarded and will fail fast on unsupported environments. On Windows CUDA hosts, `doctor --training` validates the stack before you start a long run.
 `train-grpo` defaults to the latest completed SFT checkpoint when the profile leaves `base_model_id` unset, and `eval-grpo-checkpoint` now defaults to `384` decode tokens to match the GRPO rollout budget.
+`generate-projects` now makes one structured repair attempt with a stronger model before quarantining a compile- or test-failing project, and the run `metrics.json` includes `repaired_count`.
 
 Checkpoint evaluation writes:
 
@@ -316,7 +317,7 @@ Windows convenience wrappers:
 | Phase | Status | Notes |
 |---|---|---|
 | 0. Scaffold/tooling/tests | Implemented and validated | Ruff, pytest, coverage gate in place |
-| 1. OpenRouter generation | Implemented and validated | Includes cache, `.env` loading, quarantine on invalid projects |
+| 1. OpenRouter generation | Implemented and validated | Includes cache, `.env` loading, one repair pass before quarantine, and repaired/quarantined metrics |
 | 2. Compile + Ghidra export | Implemented and validated | Uses host Clang and local headless Ghidra |
 | 3. Dataset builder | Implemented and validated | Function-level rows, split logic, SFT packing |
 | 4. Baselines + reporting | Implemented and validated | Raw, naming-only, prompt-only cleanup, report generation |

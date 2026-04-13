@@ -119,8 +119,10 @@ class ClangCompiler:
             self.executable,
             f"-std={self.profile.c_standard}",
             f"-{self.profile.opt_level}",
-            *self.profile.extra_flags,
         ]
+        if os.name == "nt":
+            args.append("-D_CRT_SECURE_NO_WARNINGS")
+        args.extend(self.profile.extra_flags)
         if self.profile.warnings_as_errors:
             args.append("-Werror")
         args.extend(str(path) for path in sources)

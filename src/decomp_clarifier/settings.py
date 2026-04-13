@@ -50,12 +50,17 @@ class AppConfig(BaseModel):
 class GenerationModelConfig(BaseModel):
     model_id: str
     fallback_models: list[str] = Field(default_factory=list)
+    repair_model_id: str | None = None
+    repair_fallback_models: list[str] = Field(default_factory=list)
     temperature: float = 0.3
+    repair_temperature: float = 0.1
     max_tokens: int = 4000
+    repair_max_tokens: int | None = None
 
 
 class GenerationOptions(BaseModel):
     project_count: int = 10
+    max_repair_attempts: int = 1
     difficulty_weights: dict[str, float] = Field(default_factory=dict)
     topic_weights: dict[str, float] = Field(default_factory=dict)
 
