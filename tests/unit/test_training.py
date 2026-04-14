@@ -240,7 +240,11 @@ def test_training_utilities_and_rewards(
             "hallucination_penalty": 0.0,
         },
     )
-    expected_compile_only = 0.6 if resolve_clang_executable("clang") is not None else 0.0
+    expected_compile_only = (
+        safety_gate_factor(compile_success=True, behavior_success=False)
+        if resolve_clang_executable("clang") is not None
+        else 0.0
+    )
     assert compile_only_reward == expected_compile_only
 
     assert compute_completion_reward(

@@ -304,7 +304,7 @@ The numeric values in `configs/dataset/sft.yaml` task weights are not currently 
 ### 5. Run Baselines
 
 ```powershell
-python -m decomp_clarifier.cli run-baselines --remote-workers 8
+python -m decomp_clarifier.cli run-baselines --base-model-id Qwen/Qwen3.5-2B --generation-model-id openai/gpt-5.4-mini --strong-model-id openai/gpt-5.4-xhigh --remote-workers 8
 ```
 
 Verify:
@@ -666,6 +666,8 @@ Important note:
 
 - there is still no one-shot CLI that produces a single combined `baseline vs SFT vs GRPO`
   report in one run
+- if you already have the checkpoint eval artifacts, `python scripts/build_target_comparison_table.py`
+  will merge the stored baseline metrics plus the SFT and GRPO manifests into one table
 - the intended manual workflow is:
   - baseline report from `eval`
   - SFT checkpoint report from `eval-sft-checkpoint`
@@ -687,6 +689,9 @@ python -m decomp_clarifier.cli compile-projects
 python -m decomp_clarifier.cli export-ghidra
 python -m decomp_clarifier.cli build-dataset
 python -m decomp_clarifier.cli run-baselines
+
+python -m decomp_clarifier.cli run-baselines --base-model-id Qwen/Qwen3.5-2B --generation-model-id openai/gpt-5.4-mini --strong-model-id openai/gpt-5.4-xhigh
+
 python -m decomp_clarifier.cli eval
 python -m decomp_clarifier.cli report
 python -m decomp_clarifier.cli train-sft
