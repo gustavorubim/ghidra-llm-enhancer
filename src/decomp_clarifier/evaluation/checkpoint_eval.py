@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from logging import Logger
 from pathlib import Path
 
 import yaml
@@ -35,6 +37,12 @@ class CheckpointEvalArtifacts:
     report_markdown_path: Path
     report_html_path: Path
     report_json_path: Path
+
+
+def _progress_interval(sample_count: int) -> int:
+    if sample_count <= 10:
+        return 1
+    return max(1, sample_count // 10)
 
 
 def find_latest_completed_checkpoint(paths: ProjectPaths, stage: str) -> Path:
@@ -92,9 +100,18 @@ def load_dataset_split(
 def evaluate_prediction_records(
     samples_by_id: dict[str, FunctionDatasetSample],
     records: Iterable[PredictionRecord],
+    *,
+    logger: Logger | None = None,
+    progress_label: str = "evaluation",
 ) -> list[SampleEvaluation]:
     evaluations: list[SampleEvaluation] = []
-    for record in records:
+    record_list = list(records)
+    sample_count = len(record_list)
+    interval = _progress_interval(sample_count)
+    started_at = time.perf_counter()
+    if logger is not None:
+        logger.info("starting %s verification samples=%s", progress_label, sample_count)
+    for index, record in enumerate(record_list, start=1):
         sample = samples_by_id.get(record.sample_id)
         if sample is None:
             continue
@@ -112,6 +129,26 @@ def evaluate_prediction_records(
                 behavior_success=verification.behavior_success,
                 notes=[],
             )
+        )
+        if logger is not None and (index == 1 or index == sample_count or index % interval == 0):
+            elapsed = max(time.perf_counter() - started_at, 1e-9)
+            logger.info(
+                "%s progress completed=%s/%s sample_id=%s elapsed=%.1fs rate=%.2f samples/s",
+                progress_label,
+                index,
+                sample_count,
+                record.sample_id,
+                elapsed,
+                index / elapsed,
+            )
+    if logger is not None:
+        elapsed = max(time.perf_counter() - started_at, 1e-9)
+        logger.info(
+            "finished %s verification samples=%s elapsed=%.1fs rate=%.2f samples/s",
+            progress_label,
+            sample_count,
+            elapsed,
+            sample_count / elapsed if sample_count else 0.0,
         )
     return evaluations
 
@@ -353,6 +390,7 @@ def run_checkpoint_evaluation(
     paths: ProjectPaths,
     run_id: str,
     run_dir: Path,
+    logger: Logger | None = None,
     stage: str,
     checkpoint_dir: Path,
     training_profile: str,
@@ -368,37 +406,90 @@ def run_checkpoint_evaluation(
     samples = load_dataset_split(dataset_path, split=split, sample_limit=sample_limit)
     if not samples:
         raise ValueError(f"No dataset samples found for split '{split}'.")
+    if logger is not None:
+        logger.info(
+            "loaded checkpoint eval dataset stage=%s split=%s samples=%s path=%s sample_limit=%s",
+            stage,
+            split,
+            len(samples),
+            dataset_path,
+            sample_limit,
+        )
     samples_by_id = {sample.sample_id: sample for sample in samples}
 
     prompt_formatter = format_rl_prompt if stage == "grpo" else format_prompt
+    if logger is not None:
+        logger.info(
+            "loading predictor stage=%s checkpoint=%s max_new_tokens=%s temperature=%s",
+            stage,
+            checkpoint_dir,
+            max_new_tokens,
+            temperature,
+        )
     predictor = CheckpointPredictor(
         checkpoint_dir,
         config,
         prompt_formatter=prompt_formatter,
     )
     system = f"{stage}_checkpoint"
-    records = [
-        predictor.predict(
-            sample,
-            system=system,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
+    prediction_interval = _progress_interval(len(samples))
+    prediction_started_at = time.perf_counter()
+    if logger is not None:
+        logger.info("starting checkpoint prediction stage=%s samples=%s", stage, len(samples))
+    records: list[PredictionRecord] = []
+    for index, sample in enumerate(samples, start=1):
+        records.append(
+            predictor.predict(
+                sample,
+                system=system,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+            )
         )
-        for sample in samples
-    ]
+        if logger is not None and (
+            index == 1 or index == len(samples) or index % prediction_interval == 0
+        ):
+            elapsed = max(time.perf_counter() - prediction_started_at, 1e-9)
+            logger.info(
+                "checkpoint prediction progress stage=%s completed=%s/%s sample_id=%s elapsed=%.1fs rate=%.2f samples/s",
+                stage,
+                index,
+                len(samples),
+                sample.sample_id,
+                elapsed,
+                index / elapsed,
+            )
+    if logger is not None:
+        elapsed = max(time.perf_counter() - prediction_started_at, 1e-9)
+        logger.info(
+            "finished checkpoint prediction stage=%s samples=%s elapsed=%.1fs rate=%.2f samples/s",
+            stage,
+            len(samples),
+            elapsed,
+            len(samples) / elapsed,
+        )
 
     predictions_path = run_dir / "predictions.jsonl"
     predictions_path.write_text(
         "\n".join(record.model_dump_json() for record in records) + "\n",
         encoding="utf-8",
     )
+    if logger is not None:
+        logger.info("wrote checkpoint predictions path=%s records=%s", predictions_path, len(records))
 
-    evaluations = evaluate_prediction_records(samples_by_id, records)
+    evaluations = evaluate_prediction_records(
+        samples_by_id,
+        records,
+        logger=logger,
+        progress_label=f"{stage} verifier",
+    )
     evaluations_path = run_dir / "sample_evaluations.jsonl"
     evaluations_path.write_text(
         "\n".join(item.model_dump_json() for item in evaluations) + "\n",
         encoding="utf-8",
     )
+    if logger is not None:
+        logger.info("wrote checkpoint evaluations path=%s records=%s", evaluations_path, len(evaluations))
 
     report = build_report(run_id, evaluations)
     baseline_metrics = load_baseline_reports(paths, samples_by_id)
@@ -421,6 +512,13 @@ def run_checkpoint_evaluation(
     report_markdown_path, report_html_path, report_json_path = write_report(
         report, run_dir / "reports"
     )
+    if logger is not None:
+        logger.info(
+            "wrote checkpoint report markdown=%s html=%s json=%s",
+            report_markdown_path,
+            report_html_path,
+            report_json_path,
+        )
 
     inspection_items = select_inspection_items(
         samples_by_id,
@@ -431,6 +529,13 @@ def run_checkpoint_evaluation(
     inspection_markdown_path = run_dir / "inspection_samples.md"
     inspection_jsonl_path = run_dir / "inspection_samples.jsonl"
     write_inspection_samples(inspection_items, inspection_markdown_path, inspection_jsonl_path)
+    if logger is not None:
+        logger.info(
+            "wrote inspection samples markdown=%s jsonl=%s count=%s",
+            inspection_markdown_path,
+            inspection_jsonl_path,
+            len(inspection_items),
+        )
 
     baseline_metrics = {
         name: metrics for name, metrics in all_system_metrics.items() if name != system
@@ -448,6 +553,8 @@ def run_checkpoint_evaluation(
         ),
         encoding="utf-8",
     )
+    if logger is not None:
+        logger.info("wrote comparison markdown path=%s", comparison_markdown_path)
 
     manifest_path = run_dir / "checkpoint_eval_manifest.json"
     manifest_path.write_text(
@@ -479,6 +586,8 @@ def run_checkpoint_evaluation(
         ),
         encoding="utf-8",
     )
+    if logger is not None:
+        logger.info("wrote checkpoint eval manifest path=%s", manifest_path)
 
     return CheckpointEvalArtifacts(
         manifest_path=manifest_path,

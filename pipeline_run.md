@@ -304,7 +304,7 @@ The numeric values in `configs/dataset/sft.yaml` task weights are not currently 
 ### 5. Run Baselines
 
 ```powershell
-python -m decomp_clarifier.cli run-baselines
+python -m decomp_clarifier.cli run-baselines --remote-workers 8
 ```
 
 Verify:
