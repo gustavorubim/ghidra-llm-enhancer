@@ -47,8 +47,8 @@ def compile_reward(compiles: bool) -> float:
     return 1.0 if compiles else 0.0
 
 
-def behavior_reward(success: bool) -> float:
-    return 1.0 if success else 0.0
+def behavior_reward(score: float) -> float:
+    return max(0.0, min(1.0, score))
 
 
 def readability_reward(output: ClarifiedFunctionOutput, raw_code: str) -> float:
@@ -101,7 +101,7 @@ def decompiler_type_penalty(output: ClarifiedFunctionOutput) -> float:
         match.group(0).lower()
         for match in _DECOMPILER_TYPE_PATTERN.finditer(output.cleaned_c)
     }
-    return float(min(3, len(types)))
+    return float(min(3, len(types)) / 3)
 
 
 def hallucination_penalty(
@@ -117,7 +117,7 @@ def hallucination_penalty(
     unsupported = [
         name for name in observed_calls if name not in allowed_calls and name not in harmless
     ]
-    return float(min(3, len(unsupported)))
+    return float(min(3, len(unsupported)) / 3)
 
 
 def safety_gate_factor(*, compile_success: bool, behavior_success: bool) -> float:
@@ -139,6 +139,8 @@ def reward_breakdown(
     target_renamings: dict[str, str],
     compile_success: bool,
     behavior_success: bool,
+    behavior_score: float | None = None,
+    behavior_improvement: bool = True,
     allowed_imports: list[str],
     allowed_callees: list[str],
     weights: dict[str, float],
@@ -162,7 +164,14 @@ def reward_breakdown(
     cleanup_value = cleanup_reward(output, raw_code)
     naming_value = naming_reward(output, target_renamings)
     compile_value = compile_reward(compile_success)
-    behavior_value = behavior_reward(behavior_success)
+    effective_behavior_score = (
+        1.0 if behavior_success else 0.0
+        if behavior_score is None
+        else behavior_score
+    )
+    behavior_value = behavior_reward(
+        effective_behavior_score if behavior_improvement else 0.0
+    )
     readability_value = readability_reward(output, raw_code)
     signature_value = signature_reward(output, target_clean_code, source_function_name)
     hallucination_value = hallucination_penalty(output, allowed_imports, allowed_callees)
@@ -211,6 +220,8 @@ def weighted_reward(
     target_renamings: dict[str, str],
     compile_success: bool,
     behavior_success: bool,
+    behavior_score: float | None = None,
+    behavior_improvement: bool = True,
     allowed_imports: list[str],
     allowed_callees: list[str],
     weights: dict[str, float],
@@ -224,6 +235,8 @@ def weighted_reward(
         target_renamings=target_renamings,
         compile_success=compile_success,
         behavior_success=behavior_success,
+        behavior_score=behavior_score,
+        behavior_improvement=behavior_improvement,
         allowed_imports=allowed_imports,
         allowed_callees=allowed_callees,
         weights=weights,

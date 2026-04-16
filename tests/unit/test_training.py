@@ -142,7 +142,8 @@ def test_training_utilities_and_rewards(
     assert cleanup_reward(output, sample.ghidra_decompiled_code) >= 0.0
     assert naming_reward(output, sample.rename_map_target) == 1.0
     assert compile_reward(True) == 1.0
-    assert behavior_reward(True) == 1.0
+    assert behavior_reward(0.4) == 0.4
+    assert behavior_reward(2.0) == 1.0
     assert readability_reward(output, sample.ghidra_decompiled_code) >= 0.0
     assert signature_reward(output, sample.target_clean_code, sample.source_function_name) == 1.0
     assert decompiler_type_penalty(output) == 0.0
@@ -181,7 +182,14 @@ def test_training_utilities_and_rewards(
         renamings={},
         cleaned_c="ulong64 helper(undefined8 param_1) { return 0; }",
     )
-    assert decompiler_type_penalty(decompiler_output) >= 1.0
+    assert decompiler_type_penalty(decompiler_output) == pytest.approx(2 / 3)
+    hallucinating_output = ClarifiedFunctionOutput(
+        summary="Calls too many helpers.",
+        confidence=0.9,
+        renamings={},
+        cleaned_c="int helper(void) { foo(); bar(); baz(); qux(); return 0; }",
+    )
+    assert hallucination_penalty(hallucinating_output, ["puts"], []) == 1.0
     assert signature_reward(
         decompiler_output, sample.target_clean_code, sample.source_function_name
     ) < 1.0
@@ -278,6 +286,68 @@ def test_prepare_model_runtime_environment_sanitizes_invalid_cert_paths(
         else 0.0
     )
     assert compile_only_reward == expected_compile_only
+    continuous_behavior_reward = weighted_reward(
+        output=ClarifiedFunctionOutput(
+            summary="ok",
+            confidence=1.0,
+            renamings={},
+            cleaned_c="int helper(void) { return 0; }",
+        ),
+        json_valid=True,
+        raw_code="int helper(void){ undefined8 local_10; return 0; }",
+        target_clean_code="int helper(int value) { return value; }",
+        source_function_name="helper",
+        target_renamings={},
+        compile_success=True,
+        behavior_success=False,
+        behavior_score=0.25,
+        behavior_improvement=True,
+        allowed_imports=[],
+        allowed_callees=[],
+        weights={
+            "format": 0.0,
+            "cleanup": 0.0,
+            "naming": 0.0,
+            "compile": 0.0,
+            "behavior": 1.0,
+            "readability": 0.0,
+            "signature": 0.0,
+            "hallucination_penalty": 0.0,
+            "decompiler_type_penalty": 0.0,
+        },
+    )
+    assert continuous_behavior_reward == pytest.approx(0.15)
+    regressive_behavior_reward = weighted_reward(
+        output=ClarifiedFunctionOutput(
+            summary="ok",
+            confidence=1.0,
+            renamings={},
+            cleaned_c="int helper(void) { return 0; }",
+        ),
+        json_valid=True,
+        raw_code="int helper(void){ undefined8 local_10; return 0; }",
+        target_clean_code="int helper(int value) { return value; }",
+        source_function_name="helper",
+        target_renamings={},
+        compile_success=True,
+        behavior_success=False,
+        behavior_score=0.8,
+        behavior_improvement=False,
+        allowed_imports=[],
+        allowed_callees=[],
+        weights={
+            "format": 0.0,
+            "cleanup": 0.0,
+            "naming": 0.0,
+            "compile": 0.0,
+            "behavior": 1.0,
+            "readability": 0.0,
+            "signature": 0.0,
+            "hallucination_penalty": 0.0,
+            "decompiler_type_penalty": 0.0,
+        },
+    )
+    assert regressive_behavior_reward == 0.0
 
     assert compute_completion_reward(
         completion=(
@@ -560,6 +630,8 @@ def test_run_training_wrappers_with_fake_modules(
     assert captured_grpo_args[0].optim == "adamw_8bit"
     assert captured_grpo_args[0].max_grad_norm == 0.2
     assert captured_grpo_args[0].save_steps == 17
+    assert captured_grpo_args[0].scale_rewards == "group"
+    assert captured_grpo_args[0].mask_truncated_completions is True
 
     sft_payload = json.loads(sft_manifest.read_text(encoding="utf-8"))
     grpo_payload = json.loads(grpo_manifest.read_text(encoding="utf-8"))

@@ -106,11 +106,12 @@ def compute_completion_reward_details(
             function_name=source_function_name or None,
         )
         behavior_score = behavior_similarity(output.cleaned_c, target_clean_code)
-        behavior_success = behavior_score >= behavior_threshold and is_behavior_improvement(
+        behavior_improvement = is_behavior_improvement(
             output.cleaned_c,
             raw_code,
             target_clean_code,
         )
+        behavior_success = behavior_score >= behavior_threshold and behavior_improvement
         return reward_breakdown(
             output=output,
             json_valid=json_valid,
@@ -120,6 +121,8 @@ def compute_completion_reward_details(
             target_renamings=renamings,
             compile_success=compile_success,
             behavior_success=behavior_success,
+            behavior_score=behavior_score,
+            behavior_improvement=behavior_improvement,
             allowed_imports=imports,
             allowed_callees=callees,
             weights=weights,
@@ -284,6 +287,8 @@ def run_grpo_training(dataset_path: Path, output_dir: Path, config: TrainingConf
             max_completion_length=config.training.max_completion_length or 256,
             num_generations=num_generations,
             generation_batch_size=generation_batch_size,
+            scale_rewards="group",
+            mask_truncated_completions=True,
             max_steps=max_steps,
             max_grad_norm=max_grad_norm,
             save_steps=(
