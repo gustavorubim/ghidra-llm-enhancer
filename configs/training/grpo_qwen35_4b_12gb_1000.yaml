@@ -1,6 +1,6 @@
 model:
   base_model_id:
-  source_training_profile: sft_qwen35_4b_12gb_1000
+  source_training_profile: sft_qwen35_4b_12gb
   loader_variant: unsloth
 training:
   max_seq_length: 1536
