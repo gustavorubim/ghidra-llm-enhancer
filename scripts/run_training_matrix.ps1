@@ -85,8 +85,18 @@ function Invoke-MatrixStep {
     }
 
     $startedAt = Get-Date
-    $output = & $PythonExe @command 2>&1 | Tee-Object -FilePath $logPath
-    $returnCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Python logging writes to stderr by default; let the child process
+        # stream both channels without PowerShell converting stderr lines into
+        # terminating NativeCommandError records.
+        $ErrorActionPreference = "Continue"
+        $output = & $PythonExe @command 2>&1 | Tee-Object -FilePath $logPath
+        $returnCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     $elapsedSeconds = [Math]::Round(((Get-Date) - $startedAt).TotalSeconds, 2)
     $lines = @($output | ForEach-Object { $_.ToString() })
 
@@ -259,8 +269,15 @@ try {
             }
         } else {
             $startedAt = Get-Date
-            $output = & $python.Path @reportArgs 2>&1 | Tee-Object -FilePath $reportLog
-            $returnCode = $LASTEXITCODE
+            $previousErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = "Continue"
+                $output = & $python.Path @reportArgs 2>&1 | Tee-Object -FilePath $reportLog
+                $returnCode = $LASTEXITCODE
+            }
+            finally {
+                $ErrorActionPreference = $previousErrorActionPreference
+            }
             $elapsedSeconds = [Math]::Round(((Get-Date) - $startedAt).TotalSeconds, 2)
             $lines = @($output | ForEach-Object { $_.ToString() })
             $record = [ordered]@{
