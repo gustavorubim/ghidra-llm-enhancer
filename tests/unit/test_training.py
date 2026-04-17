@@ -109,9 +109,165 @@ def test_model_source_access_raises_clear_error_for_uncached_remote_model(monkey
     monkeypatch.setattr(sft_model, "_is_local_model_reference", lambda model_name: False)
     monkeypatch.setattr(sft_model, "_cached_remote_snapshot_dir", lambda model_name: None)
     monkeypatch.setattr(sft_model, "_can_resolve_huggingface", lambda: False)
+    monkeypatch.setattr(sft_model, "_install_public_dns_fallback_if_needed", lambda: False)
 
     with pytest.raises(RuntimeError, match="Restore DNS/internet access to Hugging Face"):
         sft_model._resolve_model_source("unsloth/gemma-4-E2B-it")
+
+
+def test_model_source_access_uses_public_dns_fallback_for_uncached_remote_model(
+    monkeypatch,
+) -> None:
+    from decomp_clarifier.training.sft import model as sft_model
+
+    monkeypatch.setattr(sft_model, "_is_local_model_reference", lambda model_name: False)
+    monkeypatch.setattr(sft_model, "_cached_remote_snapshot_dir", lambda model_name: None)
+    monkeypatch.setattr(sft_model, "_can_resolve_huggingface", lambda: False)
+    monkeypatch.setattr(sft_model, "_install_public_dns_fallback_if_needed", lambda: True)
+
+    resolved = sft_model._resolve_model_source("unsloth/gemma-4-E2B-it")
+
+    assert resolved == "unsloth/gemma-4-E2B-it"
+
+
+def test_parse_nslookup_addresses_ignores_dns_server_address() -> None:
+    from decomp_clarifier.training.sft import model as sft_model
+
+    output = """
+Server:  one.one.one.one
+Address:  1.1.1.1
+
+Name:    huggingface.co
+Addresses:  3.166.152.44
+          3.166.152.105
+"""
+
+    assert sft_model._parse_nslookup_addresses(output) == ["3.166.152.44", "3.166.152.105"]
+
+
+def test_candidate_remote_model_ids_prefers_unsloth_4bit_repo() -> None:
+    from decomp_clarifier.training.sft import model as sft_model
+
+    assert sft_model._candidate_remote_model_ids("unsloth/gemma-4-E2B-it", True) == [
+        "unsloth/gemma-4-E2B-it-unsloth-bnb-4bit",
+    ]
+    assert sft_model._candidate_remote_model_ids("Qwen/Qwen3.5-2B", True) == [
+        "Qwen/Qwen3.5-2B"
+    ]
+
+
+def test_transient_snapshot_error_detection() -> None:
+    from decomp_clarifier.training.sft import model as sft_model
+
+    assert sft_model._is_transient_snapshot_error(
+        RuntimeError("[WinError 10051] A socket operation was attempted to an unreachable network")
+    )
+    assert sft_model._is_transient_snapshot_error(
+        RuntimeError("[WinError 10054] An existing connection was forcibly closed by the remote host")
+    )
+    assert not sft_model._is_transient_snapshot_error(RuntimeError("Repository not found"))
+
+
+def test_prefetch_remote_snapshot_uses_cached_unsloth_4bit_repo(monkeypatch) -> None:
+    from decomp_clarifier.training.sft import model as sft_model
+
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.setattr(sft_model, "_is_local_model_reference", lambda model_name: False)
+    monkeypatch.setattr(
+        sft_model,
+        "_cached_remote_snapshot_dir",
+        lambda repo_id: (
+            Path("C:/hf-cache/gemma-4bit")
+            if repo_id == "unsloth/gemma-4-E2B-it-unsloth-bnb-4bit"
+            else None
+        ),
+    )
+    monkeypatch.setattr(sft_model, "_snapshot_dir_has_required_files", lambda snapshot_dir: True)
+
+    resolved = sft_model._prefetch_remote_snapshot_dir("unsloth/gemma-4-E2B-it", True)
+
+    assert resolved == Path("C:/hf-cache/gemma-4bit")
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
+
+
+def test_snapshot_dir_requires_all_shards(tmp_path: Path) -> None:
+    from decomp_clarifier.training.sft import model as sft_model
+
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "config.json").write_text("{}", encoding="utf-8")
+    (snapshot_dir / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "layer_0": "model-00001-of-00002.safetensors",
+                    "layer_1": "model-00002-of-00002.safetensors",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (snapshot_dir / "model-00001-of-00002.safetensors").write_bytes(b"shard-one")
+
+    assert not sft_model._snapshot_dir_has_required_files(snapshot_dir)
+
+    (snapshot_dir / "model-00002-of-00002.safetensors").write_bytes(b"shard-two")
+
+    assert sft_model._snapshot_dir_has_required_files(snapshot_dir)
+
+
+def test_snapshot_dir_rejects_sharded_weights_without_index(tmp_path: Path) -> None:
+    from decomp_clarifier.training.sft import model as sft_model
+
+    snapshot_dir = tmp_path / "snapshot-no-index"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "config.json").write_text("{}", encoding="utf-8")
+    (snapshot_dir / "model-00001-of-00003.safetensors").write_bytes(b"partial-shard")
+
+    assert not sft_model._snapshot_dir_has_required_files(snapshot_dir)
+
+
+def test_load_model_and_tokenizer_prefers_prefetched_snapshot(monkeypatch) -> None:
+    from decomp_clarifier.settings import TrainingConfig
+    from decomp_clarifier.training.sft import model as sft_model
+
+    captured: dict[str, object] = {}
+
+    class FakeFastLanguageModel:
+        @staticmethod
+        def from_pretrained(model_name, **kwargs):
+            captured["model_name"] = model_name
+            return object(), object()
+
+        @staticmethod
+        def get_peft_model(model, **kwargs):
+            return model
+
+    monkeypatch.setitem(
+        sys.modules,
+        "unsloth",
+        types.SimpleNamespace(FastLanguageModel=FakeFastLanguageModel),
+    )
+    monkeypatch.setattr(
+        sft_model,
+        "_prefetch_remote_snapshot_dir",
+        lambda model_name, load_in_4bit: Path("C:/hf-cache/gemma-4bit"),
+    )
+    monkeypatch.setattr(
+        sft_model,
+        "_resolve_model_source",
+        lambda model_name: "C:/should-not-be-used",
+    )
+    config = TrainingConfig.model_validate(
+        {
+            "model": {"base_model_id": "unsloth/gemma-4-E2B-it", "loader_variant": "unsloth"},
+            "training": {"load_in_4bit": True, "lora_rank": 8, "max_seq_length": 512},
+        }
+    )
+
+    sft_model.load_model_and_tokenizer(config)
+
+    assert Path(str(captured["model_name"])) == Path("C:/hf-cache/gemma-4bit")
 
 
 def test_training_utilities_and_rewards(
@@ -285,6 +441,7 @@ def test_prepare_model_runtime_environment_sanitizes_invalid_cert_paths(
 
     assert "SSL_CERT_FILE" not in os.environ
     assert "SSL_CERT_DIR" not in os.environ
+    assert os.environ["HF_HUB_DISABLE_XET"] == "1"
     assert os.environ["UNSLOTH_DISABLE_STATISTICS"] == "1"
 
     monkeypatch.setenv("SSL_CERT_FILE", str(existing_file))
@@ -294,6 +451,26 @@ def test_prepare_model_runtime_environment_sanitizes_invalid_cert_paths(
 
     assert os.environ["SSL_CERT_FILE"] == str(existing_file)
     assert os.environ["SSL_CERT_DIR"] == str(existing_dir)
+
+
+def test_model_source_access_attempts_dns_fallback_before_online_lookup(monkeypatch) -> None:
+    from decomp_clarifier.training.sft import model as sft_model
+
+    calls: list[str] = []
+
+    monkeypatch.setattr(sft_model, "_is_local_model_reference", lambda model_name: False)
+    monkeypatch.setattr(sft_model, "_cached_remote_snapshot_dir", lambda model_name: None)
+    monkeypatch.setattr(
+        sft_model,
+        "_install_public_dns_fallback_if_needed",
+        lambda: calls.append("install") or True,
+    )
+    monkeypatch.setattr(sft_model, "_can_resolve_huggingface", lambda: True)
+
+    resolved = sft_model._resolve_model_source("unsloth/gemma-4-E2B-it")
+
+    assert resolved == "unsloth/gemma-4-E2B-it"
+    assert calls == ["install"]
     compile_only_reward = compute_completion_reward(
         completion=(
             '{"summary":"ok","confidence":1.0,"renamings":{},'

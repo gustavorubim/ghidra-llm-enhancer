@@ -15,6 +15,9 @@ def prepare_model_runtime_environment(env: dict[str, str] | None = None) -> dict
         value = target.get(variable)
         if value and not Path(value).expanduser().exists():
             target.pop(variable, None)
+    # Xet can spawn an alternate downloader path with harder-to-debug failures on
+    # misconfigured Windows DNS. Keep Hub downloads on the standard Python path.
+    target.setdefault("HF_HUB_DISABLE_XET", "1")
     target.setdefault("UNSLOTH_DISABLE_STATISTICS", "1")
     return target
 
