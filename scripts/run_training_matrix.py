@@ -22,25 +22,37 @@ from decomp_clarifier.evaluation.target_comparison import (  # noqa: E402
 from decomp_clarifier.paths import ProjectPaths  # noqa: E402
 from decomp_clarifier.settings import load_app_config  # noqa: E402
 
-SFT_PROFILES = (
-    "sft_qwen35_2b",
-    "sft_qwen35_4b",
-    "sft_gemma4_e2b_it",
-    "sft_gemma4_e4b_it",
-)
-GRPO_PROFILES = (
-    "grpo_qwen35_2b",
-    "grpo_qwen35_4b",
-    "grpo_gemma4_e2b_it",
-    "grpo_gemma4_e4b_it",
+MODEL_GROUPS = (
+    {
+        "name": "2b",
+        "sft_profiles": (
+            "sft_qwen35_2b",
+            "sft_gemma4_e2b_it",
+        ),
+        "grpo_profiles": (
+            "grpo_qwen35_2b",
+            "grpo_gemma4_e2b_it",
+        ),
+    },
+    {
+        "name": "4b",
+        "sft_profiles": (
+            "sft_qwen35_4b",
+            "sft_gemma4_e4b_it",
+        ),
+        "grpo_profiles": (
+            "grpo_qwen35_4b",
+            "grpo_gemma4_e4b_it",
+        ),
+    },
 )
 SUMMARY_PROFILE_COLUMNS = [
     "sft_qwen35_2b",
     "grpo_qwen35_2b",
-    "sft_qwen35_4b",
-    "grpo_qwen35_4b",
     "sft_gemma4_e2b_it",
     "grpo_gemma4_e2b_it",
+    "sft_qwen35_4b",
+    "grpo_qwen35_4b",
     "sft_gemma4_e4b_it",
     "grpo_gemma4_e4b_it",
 ]
@@ -137,6 +149,11 @@ def _build_summary_payload(
     }
 
 
+def _all_profiles(*, stage: str) -> list[str]:
+    key = f"{stage}_profiles"
+    return [profile for group in MODEL_GROUPS for profile in group[key]]
+
+
 def main() -> None:
     args = parse_args()
     root = ProjectPaths.discover(start=ROOT)
@@ -159,102 +176,124 @@ def main() -> None:
         "inspection_sample_count": args.inspection_sample_count,
         "max_new_tokens": args.max_new_tokens,
         "temperature": args.temperature,
-        "sft_profiles": list(SFT_PROFILES),
-        "grpo_profiles": list(GRPO_PROFILES),
+        "execution_groups": [
+            {
+                "name": group["name"],
+                "sft_profiles": list(group["sft_profiles"]),
+                "grpo_profiles": list(group["grpo_profiles"]),
+            }
+            for group in MODEL_GROUPS
+        ],
+        "sft_profiles": _all_profiles(stage="sft"),
+        "grpo_profiles": _all_profiles(stage="grpo"),
         "steps": [],
     }
     _write_json(manifest_path, state)
 
     try:
         step_index = 1
-        for profile in SFT_PROFILES:
-            step = _run_cli_step(
-                root=root,
-                run_dir=run_dir,
-                env=env,
-                step_index=step_index,
-                label=f"train-{profile}",
-                cli_args=["train-sft", "--training-profile", profile, "--app-profile", args.app_profile],
-            )
-            state["steps"].append(step)
-            _write_json(manifest_path, state)
-            step_index += 1
-
-        for profile in GRPO_PROFILES:
-            step = _run_cli_step(
-                root=root,
-                run_dir=run_dir,
-                env=env,
-                step_index=step_index,
-                label=f"train-{profile}",
-                cli_args=["train-grpo", "--training-profile", profile, "--app-profile", args.app_profile],
-            )
-            state["steps"].append(step)
-            _write_json(manifest_path, state)
-            step_index += 1
 
         eval_manifest_paths: dict[str, str] = {}
-        for profile in SFT_PROFILES:
-            cli_args = [
-                "eval-sft-checkpoint",
-                "--training-profile",
-                profile,
-                "--split",
-                args.split,
-                "--inspection-sample-count",
-                str(args.inspection_sample_count),
-                "--max-new-tokens",
-                str(args.max_new_tokens),
-                "--temperature",
-                str(args.temperature),
-                "--app-profile",
-                args.app_profile,
-            ]
-            if args.sample_limit is not None:
-                cli_args.extend(["--sample-limit", str(args.sample_limit)])
-            step = _run_cli_step(
-                root=root,
-                run_dir=run_dir,
-                env=env,
-                step_index=step_index,
-                label=f"eval-{profile}",
-                cli_args=cli_args,
-            )
-            state["steps"].append(step)
-            eval_manifest_paths[profile] = step["manifest_path"]
-            _write_json(manifest_path, state)
-            step_index += 1
+        for group in MODEL_GROUPS:
+            for profile in group["sft_profiles"]:
+                step = _run_cli_step(
+                    root=root,
+                    run_dir=run_dir,
+                    env=env,
+                    step_index=step_index,
+                    label=f"train-{profile}",
+                    cli_args=[
+                        "train-sft",
+                        "--training-profile",
+                        profile,
+                        "--app-profile",
+                        args.app_profile,
+                    ],
+                )
+                state["steps"].append(step)
+                _write_json(manifest_path, state)
+                step_index += 1
 
-        for profile in GRPO_PROFILES:
-            cli_args = [
-                "eval-grpo-checkpoint",
-                "--training-profile",
-                profile,
-                "--split",
-                args.split,
-                "--inspection-sample-count",
-                str(args.inspection_sample_count),
-                "--max-new-tokens",
-                str(args.max_new_tokens),
-                "--temperature",
-                str(args.temperature),
-                "--app-profile",
-                args.app_profile,
-            ]
-            if args.sample_limit is not None:
-                cli_args.extend(["--sample-limit", str(args.sample_limit)])
-            step = _run_cli_step(
-                root=root,
-                run_dir=run_dir,
-                env=env,
-                step_index=step_index,
-                label=f"eval-{profile}",
-                cli_args=cli_args,
-            )
-            state["steps"].append(step)
-            eval_manifest_paths[profile] = step["manifest_path"]
-            _write_json(manifest_path, state)
-            step_index += 1
+            for profile in group["grpo_profiles"]:
+                step = _run_cli_step(
+                    root=root,
+                    run_dir=run_dir,
+                    env=env,
+                    step_index=step_index,
+                    label=f"train-{profile}",
+                    cli_args=[
+                        "train-grpo",
+                        "--training-profile",
+                        profile,
+                        "--app-profile",
+                        args.app_profile,
+                    ],
+                )
+                state["steps"].append(step)
+                _write_json(manifest_path, state)
+                step_index += 1
+
+            for profile in group["sft_profiles"]:
+                cli_args = [
+                    "eval-sft-checkpoint",
+                    "--training-profile",
+                    profile,
+                    "--split",
+                    args.split,
+                    "--inspection-sample-count",
+                    str(args.inspection_sample_count),
+                    "--max-new-tokens",
+                    str(args.max_new_tokens),
+                    "--temperature",
+                    str(args.temperature),
+                    "--app-profile",
+                    args.app_profile,
+                ]
+                if args.sample_limit is not None:
+                    cli_args.extend(["--sample-limit", str(args.sample_limit)])
+                step = _run_cli_step(
+                    root=root,
+                    run_dir=run_dir,
+                    env=env,
+                    step_index=step_index,
+                    label=f"eval-{profile}",
+                    cli_args=cli_args,
+                )
+                state["steps"].append(step)
+                eval_manifest_paths[profile] = step["manifest_path"]
+                _write_json(manifest_path, state)
+                step_index += 1
+
+            for profile in group["grpo_profiles"]:
+                cli_args = [
+                    "eval-grpo-checkpoint",
+                    "--training-profile",
+                    profile,
+                    "--split",
+                    args.split,
+                    "--inspection-sample-count",
+                    str(args.inspection_sample_count),
+                    "--max-new-tokens",
+                    str(args.max_new_tokens),
+                    "--temperature",
+                    str(args.temperature),
+                    "--app-profile",
+                    args.app_profile,
+                ]
+                if args.sample_limit is not None:
+                    cli_args.extend(["--sample-limit", str(args.sample_limit)])
+                step = _run_cli_step(
+                    root=root,
+                    run_dir=run_dir,
+                    env=env,
+                    step_index=step_index,
+                    label=f"eval-{profile}",
+                    cli_args=cli_args,
+                )
+                state["steps"].append(step)
+                eval_manifest_paths[profile] = step["manifest_path"]
+                _write_json(manifest_path, state)
+                step_index += 1
 
         manifests_by_profile: dict[str, dict[str, Any]] = {}
         for profile, path in eval_manifest_paths.items():
