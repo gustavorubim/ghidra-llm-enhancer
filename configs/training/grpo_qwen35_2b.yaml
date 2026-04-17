@@ -6,7 +6,7 @@ training:
   max_seq_length: 1536
   load_in_4bit: true
   precision: bf16
-  lora_rank: 8
+  lora_rank: 32
   batch_size: 1
   grad_accum_steps: 1
   epochs: 1

@@ -12,6 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $python = Resolve-Path (Join-Path $repoRoot ".venv\Scripts\python.exe")
+$powershellExe = (Get-Command powershell).Source
 $env:PYTHONPATH = (Resolve-Path (Join-Path $repoRoot "src")).Path
 
 $modelGroups = @(
@@ -60,22 +61,22 @@ function Invoke-MatrixStep {
         [hashtable]$Step,
         [int]$StepIndex,
         [int]$TotalSteps,
-        [string]$StepsDir,
-        [string]$PythonExe
+        [string]$StepsDir
     )
 
     $logPath = Join-Path $StepsDir ("{0:D2}-{1}.log" -f $StepIndex, $Step.Label)
-    $command = @("-m", "decomp_clarifier.cli") + $Step.CliArgs
+    $stepArgs = @($Step.Args)
+    $command = @($Step.Executable) + $stepArgs
 
     Write-Host ""
     Write-Host "[$StepIndex/$TotalSteps] $($Step.Label)" -ForegroundColor Cyan
-    Write-Host ("Command: {0} {1}" -f $PythonExe, ($command -join " "))
+    Write-Host ("Command: {0}" -f ($command -join " "))
     Write-Host "Log: $logPath"
     Write-Host ("-" * 80)
 
     $record = [ordered]@{
         label = $Step.Label
-        command = @($PythonExe) + $command
+        command = $command
         log = $logPath
     }
 
@@ -85,13 +86,14 @@ function Invoke-MatrixStep {
     }
 
     $startedAt = Get-Date
+    $output = @()
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         # Python logging writes to stderr by default; let the child process
         # stream both channels without PowerShell converting stderr lines into
         # terminating NativeCommandError records.
         $ErrorActionPreference = "Continue"
-        $output = & $PythonExe @command 2>&1 | Tee-Object -FilePath $logPath
+        & $Step.Executable @stepArgs 2>&1 | Tee-Object -FilePath $logPath | Tee-Object -Variable output
         $returnCode = $LASTEXITCODE
     }
     finally {
@@ -133,10 +135,12 @@ foreach ($group in $modelGroups) {
         $stepDefinitions.Add([ordered]@{
             Label = "train-$profile"
             ExpectsManifest = $true
-            CliArgs = @(
-                "train-sft",
-                "--training-profile", $profile,
-                "--app-profile", $AppProfile
+            Executable = $powershellExe
+            Args = @(
+                "-ExecutionPolicy", "Bypass",
+                "-File", (Join-Path $repoRoot "scripts\train_sft.ps1"),
+                "-TrainingProfile", $profile,
+                "-AppProfile", $AppProfile
             )
         })
     }
@@ -144,49 +148,55 @@ foreach ($group in $modelGroups) {
         $stepDefinitions.Add([ordered]@{
             Label = "train-$profile"
             ExpectsManifest = $true
-            CliArgs = @(
-                "train-grpo",
-                "--training-profile", $profile,
-                "--app-profile", $AppProfile
+            Executable = $powershellExe
+            Args = @(
+                "-ExecutionPolicy", "Bypass",
+                "-File", (Join-Path $repoRoot "scripts\train_grpo.ps1"),
+                "-TrainingProfile", $profile,
+                "-AppProfile", $AppProfile
             )
         })
     }
     foreach ($profile in $group.SftProfiles) {
-        $cliArgs = @(
-            "eval-sft-checkpoint",
-            "--training-profile", $profile,
-            "--split", $Split,
-            "--inspection-sample-count", "$InspectionSampleCount",
-            "--max-new-tokens", "$MaxNewTokens",
-            "--temperature", "$Temperature",
-            "--app-profile", $AppProfile
+        $scriptArgs = @(
+            "-ExecutionPolicy", "Bypass",
+            "-File", (Join-Path $repoRoot "scripts\eval_sft_checkpoint.ps1"),
+            "-TrainingProfile", $profile,
+            "-AppProfile", $AppProfile,
+            "-Split", $Split,
+            "-InspectionSampleCount", "$InspectionSampleCount",
+            "-MaxNewTokens", "$MaxNewTokens",
+            "-Temperature", "$Temperature"
         )
         if ($SampleLimit -gt 0) {
-            $cliArgs += @("--sample-limit", "$SampleLimit")
+            $scriptArgs += @("-SampleLimit", "$SampleLimit")
         }
         $stepDefinitions.Add([ordered]@{
             Label = "eval-$profile"
             ExpectsManifest = $true
-            CliArgs = $cliArgs
+            Executable = $powershellExe
+            Args = $scriptArgs
         })
     }
     foreach ($profile in $group.GrpoProfiles) {
-        $cliArgs = @(
-            "eval-grpo-checkpoint",
-            "--training-profile", $profile,
-            "--split", $Split,
-            "--inspection-sample-count", "$InspectionSampleCount",
-            "--max-new-tokens", "$MaxNewTokens",
-            "--temperature", "$Temperature",
-            "--app-profile", $AppProfile
+        $scriptArgs = @(
+            "-ExecutionPolicy", "Bypass",
+            "-File", (Join-Path $repoRoot "scripts\eval_grpo_checkpoint.ps1"),
+            "-TrainingProfile", $profile,
+            "-AppProfile", $AppProfile,
+            "-Split", $Split,
+            "-InspectionSampleCount", "$InspectionSampleCount",
+            "-MaxNewTokens", "$MaxNewTokens",
+            "-Temperature", "$Temperature"
         )
         if ($SampleLimit -gt 0) {
-            $cliArgs += @("--sample-limit", "$SampleLimit")
+            $scriptArgs += @("-SampleLimit", "$SampleLimit")
         }
         $stepDefinitions.Add([ordered]@{
             Label = "eval-$profile"
             ExpectsManifest = $true
-            CliArgs = $cliArgs
+            Executable = $powershellExe
+            Args = $scriptArgs
         })
     }
 }
@@ -227,8 +237,7 @@ try {
             -Step $step `
             -StepIndex $stepIndex `
             -TotalSteps $totalSteps `
-            -StepsDir $stepsDir `
-            -PythonExe $python.Path
+            -StepsDir $stepsDir
         $state.steps += $record
 
         if ($record.status -eq "completed" -and $step.Label.StartsWith("eval-")) {
@@ -269,10 +278,11 @@ try {
             }
         } else {
             $startedAt = Get-Date
+            $output = @()
             $previousErrorActionPreference = $ErrorActionPreference
             try {
                 $ErrorActionPreference = "Continue"
-                $output = & $python.Path @reportArgs 2>&1 | Tee-Object -FilePath $reportLog
+                & $python.Path @reportArgs 2>&1 | Tee-Object -FilePath $reportLog | Tee-Object -Variable output
                 $returnCode = $LASTEXITCODE
             }
             finally {
