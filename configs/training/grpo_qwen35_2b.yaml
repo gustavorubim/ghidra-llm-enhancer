@@ -10,7 +10,7 @@ training:
   batch_size: 1
   grad_accum_steps: 1
   epochs: 1
-  max_steps: 100
+  max_steps: 500
   max_prompt_length: 896
   max_completion_length: 384
   generations_per_prompt: 4

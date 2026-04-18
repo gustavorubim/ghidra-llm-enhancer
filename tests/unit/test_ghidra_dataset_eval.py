@@ -122,7 +122,7 @@ def test_parse_exports_align_dataset_and_export_runner(
     assert rl_records[0].tests_ref == sample_dataset_samples[0].tests_ref
     assert rl_records[0].prompt_messages[0].role == "user"
     assert records[0].completion_messages[0].role == "assistant"
-    assert "Assembly:" in rl_records[0].prompt
+    assert "Assembly:" not in rl_records[0].prompt
     assert "Decompiler:" in rl_records[0].prompt
 
     class FakeAdapter:
@@ -453,7 +453,8 @@ def test_rl_prompt_is_compact_relative_to_sft_prompt(sample_dataset_samples) -> 
     rl_prompt = format_rl_prompt(sample)
 
     assert "Assembly:" in sft_prompt
-    assert rl_prompt == sft_prompt
+    assert "Assembly:" not in rl_prompt
+    assert len(rl_prompt) < len(sft_prompt)
 
 
 def test_logging_splitters_and_inventory_branches(tmp_path: Path, monkeypatch) -> None:

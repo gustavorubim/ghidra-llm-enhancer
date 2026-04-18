@@ -405,7 +405,7 @@ def test_training_utilities_and_rewards(
         encoding="utf-8",
     )
     rl_records = load_rl_records(rl_path)
-    assert prompt_from_record(rl_records[0]) == [{"role": "user", "content": "prompt text"}]
+    assert prompt_from_record(rl_records[0]) == "prompt text"
     empty_fields = reward_fields_from_record({})
     assert empty_fields["task_type"] == "full_clarify"
     assert empty_fields["raw_code"] == ""

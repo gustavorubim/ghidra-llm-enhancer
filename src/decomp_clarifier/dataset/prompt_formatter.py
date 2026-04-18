@@ -39,4 +39,19 @@ def completion_messages(response_json: str) -> list[ChatMessage]:
 
 
 def format_rl_prompt(sample: FunctionDatasetSample) -> str:
-    return format_prompt(sample)
+    return "\n".join(
+        [
+            "You are a binary-grounded code clarification assistant.",
+            f"Task: {sample.task_type}",
+            "Return exactly one JSON object with keys summary, confidence, renamings, cleaned_c.",
+            "Do not include markdown, commentary, XML tags, or <think> blocks.",
+            "",
+            "Decompiler:",
+            sample.ghidra_decompiled_code,
+            "",
+            f"Imports: {json.dumps(sample.imports)}",
+            f"Callees: {json.dumps(sample.callees)}",
+            f"Semantic summary: {sample.semantic_summary}",
+            "JSON:",
+        ]
+    )

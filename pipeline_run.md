@@ -753,7 +753,8 @@ python -m decomp_clarifier.cli build-dataset --dataset-profile sft --app-profile
 
 python -m decomp_clarifier.cli train-sft --training-profile sft_qwen35_2b --app-profile default
 python -m decomp_clarifier.cli eval-sft-checkpoint --training-profile sft_qwen35_2b --app-profile default --split val --inspection-sample-count 8 --max-new-tokens 384 --temperature 0.0
-python -m decomp_clarifier.cli train-grpo --training-profile grpo_qwen35_2b --base-model-id <path-to-validated-qwen-sft-checkpoint> --app-profile default
+python -m decomp_clarifier.cli train-grpo --training-profile grpo_qwen35_2b --base-model-id artifacts/runs/train-sft-20260418-161635/model/checkpoint-100 --app-profile default
+
 python -m decomp_clarifier.cli eval-grpo-checkpoint --checkpoint-dir <path-to-qwen-grpo-model-dir> --training-profile grpo_qwen35_2b --app-profile default --split val --inspection-sample-count 8 --max-new-tokens 384 --temperature 0.0
 python .\scripts\build_model_matrix_summary.py --app-profile default --eval-manifest "sft_qwen35_2b=<path-to-sft-qwen35-2b-checkpoint_eval_manifest.json>" --eval-manifest "grpo_qwen35_2b=<path-to-grpo-qwen35-2b-checkpoint_eval_manifest.json>"
 
