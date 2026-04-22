@@ -136,6 +136,7 @@ Important status note:
 - GRPO now prefers project-level compile-and-test execution when the packed RL record carries a resolvable `tests_ref`; otherwise it falls back to the older similarity proxy.
 - Cleanup, naming, and readability bonuses are now staged behind compile and behavior success rather than being multiplied into all outputs.
 - The reward stack also includes a completion-length floor so short stub outputs do not collect positive reward from schema or signature terms alone.
+- GRPO now exposes the multi-reward knobs available in the pinned TRL build: `loss_type`, `multi_reward_weights`, `scale_rewards`, `beta`, and `mask_truncated_completions`. With `trl==0.24.0`, reward functions are combined by weighted sum before group or batch scaling.
 - GRPO now uses a shorter RL-specific prompt than SFT so rollout prompts fit within the 12 GB profile without truncating most samples.
 - Both training entry points now emit per-step JSONL/CSV logs, TensorBoard event logs, and PNG telemetry plots under each run's `model/` directory.
 

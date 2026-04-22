@@ -570,6 +570,7 @@ Important note:
 
 - `rl_records.jsonl` now uses a compact GRPO-specific prompt rather than the full SFT prompt. This keeps most rollout prompts under the `896` token cap in the 12 GB profile.
 - The default GRPO reward stack now prefers execution-backed behavior checks when `tests_ref` resolves to a generated project manifest, falls back to the similarity proxy otherwise, and only unlocks cleanup or readability bonuses after compile and behavior pass.
+- The tracked GRPO profiles now expose the multi-reward knobs available in the pinned TRL build: `loss_type`, `multi_reward_weights`, `scale_rewards`, `beta`, and `mask_truncated_completions`. With `trl==0.24.0`, reward functions are combined by weighted sum before group or batch scaling.
 
 ### 10. Run The Full Model Matrix
 

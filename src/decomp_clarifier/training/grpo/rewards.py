@@ -206,6 +206,9 @@ def empty_reward_breakdown(
     invalid_length_penalty_value: float = 0.0,
     truncation_penalty_value: float = 0.0,
     raw_completion_ratio: float = 0.0,
+    core_total: float = 0.0,
+    style_total: float = 0.0,
+    constraint_total: float = 0.0,
     total: float = 0.0,
 ) -> dict[str, float]:
     return {
@@ -231,6 +234,9 @@ def empty_reward_breakdown(
         "invalid_length_penalty": invalid_length_penalty_value,
         "truncation_penalty": truncation_penalty_value,
         "raw_completion_ratio": raw_completion_ratio,
+        "core_total": core_total,
+        "style_total": style_total,
+        "constraint_total": constraint_total,
         "total": total,
     }
 
@@ -445,7 +451,9 @@ def reward_breakdown(
         failure_penalty += weights.get("compile", 1.0) * _COMPILE_FAILURE_PENALTY
     if compile_success and not behavior_success:
         failure_penalty += weights.get("behavior", 1.0) * _BEHAVIOR_FAILURE_PENALTY
-    total = core_total + style_total - penalty_total - failure_penalty
+    core_total -= failure_penalty
+    constraint_total = -penalty_total
+    total = core_total + style_total + constraint_total
     return {
         "json_valid": 1.0,
         "format": format_value,
@@ -469,6 +477,9 @@ def reward_breakdown(
         "invalid_length_penalty": 0.0,
         "truncation_penalty": 0.0,
         "raw_completion_ratio": 0.0,
+        "core_total": core_total,
+        "style_total": style_total,
+        "constraint_total": constraint_total,
         "total": total,
     }
 

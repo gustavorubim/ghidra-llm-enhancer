@@ -124,6 +124,11 @@ class TrainingRunConfig(BaseModel):
     max_prompt_length: int | None = None
     max_completion_length: int | None = None
     generations_per_prompt: int | None = None
+    loss_type: str | None = None
+    multi_reward_weights: list[float] | None = None
+    scale_rewards: str | bool | None = None
+    beta: float | None = None
+    mask_truncated_completions: bool | None = None
     learning_rate: float | None = None
     adam_beta1: float | None = None
     adam_beta2: float | None = None

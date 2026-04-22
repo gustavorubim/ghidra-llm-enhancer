@@ -19,7 +19,10 @@ with suppress(ImportError):
     import torch as _torch_preload  # noqa: F401
 
 from decomp_clarifier.adapters.compiler_clang import resolve_clang_executable
-from decomp_clarifier.evaluation.behavior_eval import behavior_similarity, evaluate_execution_behavior
+from decomp_clarifier.evaluation.behavior_eval import (
+    behavior_similarity,
+    evaluate_execution_behavior,
+)
 from decomp_clarifier.schemas.model_io import ClarifiedFunctionOutput
 from decomp_clarifier.training.grpo.data import (
     load_rl_records,
@@ -43,7 +46,10 @@ from decomp_clarifier.training.grpo.rewards import (
     truncation_penalty,
     weighted_reward,
 )
-from decomp_clarifier.training.grpo.train import compute_completion_reward
+from decomp_clarifier.training.grpo.train import (
+    _resolve_multi_reward_weights,
+    compute_completion_reward,
+)
 from decomp_clarifier.training.grpo.verifier import verify_output
 from decomp_clarifier.training.sft.callbacks import write_training_summary
 from decomp_clarifier.training.sft.data import (
@@ -51,9 +57,9 @@ from decomp_clarifier.training.sft.data import (
     load_sft_records,
     prompt_completion_from_record,
 )
+from decomp_clarifier.training.utils import telemetry as training_telemetry
 from decomp_clarifier.training.utils.hardware import detect_hardware
 from decomp_clarifier.training.utils.memory_profiles import select_memory_profile
-from decomp_clarifier.training.utils import telemetry as training_telemetry
 from decomp_clarifier.training.utils.trl_compat import (
     ensure_model_warnings_issued,
     normalize_optional_flag,
@@ -88,6 +94,11 @@ def _version_with_fallback(name: str):
     if name in validated:
         return validated[name]
     return _ORIGINAL_METADATA_VERSION(name)
+
+
+def test_resolve_multi_reward_weights_rejects_wrong_length() -> None:
+    with pytest.raises(ValueError, match="must match the number of reward functions"):
+        _resolve_multi_reward_weights([1.0, 2.0])
 
 
 def test_model_source_access_sets_offline_mode_for_cached_remote_model(monkeypatch) -> None:
@@ -168,7 +179,9 @@ def test_transient_snapshot_error_detection() -> None:
         RuntimeError("[WinError 10051] A socket operation was attempted to an unreachable network")
     )
     assert sft_model._is_transient_snapshot_error(
-        RuntimeError("[WinError 10054] An existing connection was forcibly closed by the remote host")
+        RuntimeError(
+            "[WinError 10054] An existing connection was forcibly closed by the remote host"
+        )
     )
     assert not sft_model._is_transient_snapshot_error(RuntimeError("Repository not found"))
 
@@ -389,7 +402,13 @@ def test_training_utilities_and_rewards(
         cleaned_c="int helper(void) { foo(); bar(); baz(); qux(); return 0; }",
     )
     assert hallucination_penalty(hallucinating_output, ["puts"], []) == 1.0
-    assert overshoot_penalty("int helper(void) { return 0; }", "int helper(void) { return 0; }") == 0.0
+    assert (
+        overshoot_penalty(
+            "int helper(void) { return 0; }",
+            "int helper(void) { return 0; }",
+        )
+        == 0.0
+    )
     assert (
         overshoot_penalty(
             "int helper(void) { int total = 0; total += 1; total += 2; total += 3; return total; }",
@@ -1046,6 +1065,7 @@ def test_run_training_wrappers_with_fake_modules(
     from decomp_clarifier.training.sft.train import run_sft_training
 
     captured_grpo_args: list[object] = []
+    captured_reward_func_counts: list[int] = []
 
     class FakeCuda:
         @staticmethod
@@ -1105,12 +1125,13 @@ def test_run_training_wrappers_with_fake_modules(
             assert "processing_class" in kwargs
             assert "tokenizer" not in kwargs
             captured_grpo_args.append(kwargs["args"])
+            captured_reward_func_counts.append(len(kwargs.get("reward_funcs", [])))
             super().__init__(**kwargs)
 
         def train(self):
             reward_funcs = self.kwargs.get("reward_funcs", [])
-            if reward_funcs:
-                reward_funcs[0](
+            for reward_func in reward_funcs:
+                reward_func(
                     ["test completion"],
                     source_function_name=["helper"],
                     raw_code=["int uVar3(void){ int local_10; return local_10; }"],
@@ -1169,6 +1190,11 @@ def test_run_training_wrappers_with_fake_modules(
                 "max_prompt_length": 128,
                 "max_completion_length": 64,
                 "generations_per_prompt": 2,
+                "loss_type": "dr_grpo",
+                "multi_reward_weights": [1.0, 2.0, 0.5],
+                "scale_rewards": "group",
+                "beta": 0.0,
+                "mask_truncated_completions": True,
                 "learning_rate": 7e-6,
                 "adam_beta1": 0.85,
                 "adam_beta2": 0.97,
@@ -1187,6 +1213,7 @@ def test_run_training_wrappers_with_fake_modules(
     assert sft_manifest.exists()
     assert grpo_manifest.exists()
     assert len(captured_grpo_args) == 1
+    assert captured_reward_func_counts == [3]
     assert captured_grpo_args[0].learning_rate == 7e-6
     assert captured_grpo_args[0].adam_beta1 == 0.85
     assert captured_grpo_args[0].adam_beta2 == 0.97
@@ -1196,7 +1223,10 @@ def test_run_training_wrappers_with_fake_modules(
     assert captured_grpo_args[0].optim == "adamw_8bit"
     assert captured_grpo_args[0].max_grad_norm == 0.2
     assert captured_grpo_args[0].save_steps == 17
+    assert captured_grpo_args[0].loss_type == "dr_grpo"
+    assert captured_grpo_args[0].reward_weights == [1.0, 2.0, 0.5]
     assert captured_grpo_args[0].scale_rewards == "group"
+    assert captured_grpo_args[0].beta == 0.0
     assert captured_grpo_args[0].mask_truncated_completions is True
 
     sft_payload = json.loads(sft_manifest.read_text(encoding="utf-8"))

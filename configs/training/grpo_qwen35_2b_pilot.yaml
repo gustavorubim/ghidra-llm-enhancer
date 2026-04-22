@@ -14,6 +14,11 @@ training:
   max_prompt_length: 896
   max_completion_length: 384
   generations_per_prompt: 4
+  loss_type: dr_grpo
+  multi_reward_weights: [1.0, 1.0, 1.0]
+  scale_rewards: group
+  beta: 0.0
+  mask_truncated_completions: true
   learning_rate: 1.5e-6
   adam_beta1: 0.9
   adam_beta2: 0.99
