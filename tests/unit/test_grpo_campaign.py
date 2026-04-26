@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from decomp_clarifier.research.grpo_campaign import (
+    _post_target_campaign_candidates,
     _profile_eval_max_new_tokens,
+    _profile_ref_matches,
     apply_training_overrides,
     choose_campaign_experiment,
     pack_campaign_rl_records,
@@ -137,6 +139,29 @@ def test_profile_eval_max_new_tokens_uses_training_completion_length() -> None:
     assert _profile_eval_max_new_tokens({"training": {}}) == 384
 
 
+def test_profile_ref_matches_relative_and_absolute_paths(tmp_path: Path) -> None:
+    root = tmp_path
+    profile_path = root / "research" / "campaigns" / "demo" / "profiles" / "0001-demo.yaml"
+    profile_path.parent.mkdir(parents=True)
+    profile_path.write_text("training: {}\n", encoding="utf-8")
+
+    assert _profile_ref_matches(
+        manifest_ref="research\\campaigns\\demo\\profiles\\0001-demo.yaml",
+        root=root,
+        profile_path=profile_path,
+    )
+    assert _profile_ref_matches(
+        manifest_ref=str(profile_path),
+        root=root,
+        profile_path=profile_path,
+    )
+    assert not _profile_ref_matches(
+        manifest_ref="research/campaigns/demo/profiles/0002-other.yaml",
+        root=root,
+        profile_path=profile_path,
+    )
+
+
 def test_choose_campaign_experiment_long300_returns_first_untried_candidate() -> None:
     choice = choose_campaign_experiment(
         {
@@ -165,6 +190,58 @@ def test_choose_campaign_experiment_long300_skips_completed_candidates() -> None
     )
     assert choice is not None
     assert choice.experiment_id == "long300_gradaccum2_v1"
+
+
+def test_choose_campaign_experiment_post_target_returns_first_untried_candidate() -> None:
+    choice = choose_campaign_experiment(
+        {
+            "json_valid_rate": 1.0,
+            "compile_success_rate": 0.65,
+            "behavior_success_rate": 0.50,
+        },
+        {},
+        set(),
+        search_space="post_target",
+    )
+    assert choice is not None
+    assert choice.experiment_id == "post_scope_penalty_175_q25"
+
+
+def test_choose_campaign_experiment_post_target_skips_completed_candidates() -> None:
+    choice = choose_campaign_experiment(
+        {
+            "json_valid_rate": 1.0,
+            "compile_success_rate": 0.65,
+            "behavior_success_rate": 0.50,
+        },
+        {},
+        {"post_scope_penalty_175_q25", "post_scope_penalty_225_q25"},
+        search_space="post_target",
+    )
+    assert choice is not None
+    assert choice.experiment_id == "post_scope_penalty_250_q25"
+
+
+def test_choose_campaign_experiment_post_target_continues_with_q200_tranche() -> None:
+    candidates = _post_target_campaign_candidates()
+    candidate_ids = [candidate.experiment_id for candidate in candidates]
+    first_q200_index = candidate_ids.index("post2_strict_data_q200")
+
+    choice = choose_campaign_experiment(
+        {
+            "json_valid_rate": 1.0,
+            "compile_success_rate": 0.65,
+            "behavior_success_rate": 0.50,
+        },
+        {},
+        set(candidate_ids[:first_q200_index]),
+        search_space="post_target",
+    )
+
+    assert choice is not None
+    assert choice.experiment_id == "post2_strict_data_q200"
+    assert choice.overrides["training"]["max_steps"] == 200
+    assert choice.dataset_overrides["prompt_mode"] == "context_plus_strict"
 
 
 def test_choose_campaign_experiment_prioritizes_prompt_alignment_after_json_is_healthy() -> None:

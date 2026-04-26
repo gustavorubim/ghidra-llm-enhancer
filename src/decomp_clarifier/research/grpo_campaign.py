@@ -482,6 +482,27 @@ def _metrics_from_eval_manifest(manifest: Mapping[str, Any]) -> dict[str, float]
     return {key: float(metrics.get(key, 0.0)) for key in _SCORE_KEYS}
 
 
+def _normalized_path_ref(value: object) -> str:
+    return str(value).replace("\\", "/").casefold()
+
+
+def _profile_ref_matches(
+    *,
+    manifest_ref: object,
+    root: Path,
+    profile_path: Path,
+) -> bool:
+    try:
+        relative_profile = profile_path.relative_to(root)
+    except ValueError:
+        relative_profile = profile_path
+    normalized_manifest_ref = _normalized_path_ref(manifest_ref)
+    return normalized_manifest_ref in {
+        _normalized_path_ref(profile_path),
+        _normalized_path_ref(relative_profile),
+    }
+
+
 def _hard_keep_gates_pass(metrics: Mapping[str, float], champion: Mapping[str, float]) -> bool:
     return (
         float(metrics.get("compile_success_rate", 0.0))
@@ -615,6 +636,461 @@ def apply_training_overrides(
     return merge(dict(base_payload), overrides)
 
 
+def _post_target_campaign_candidates() -> list[CampaignExperiment]:
+    strict_context_data = {
+        "prompt_mode": "context_plus_strict",
+        "task_types": ["full_clarify", "cleanup"],
+        "prompt_limit": 1000,
+    }
+    strict_context_full_only = {
+        "prompt_mode": "context_plus_strict",
+        "task_types": ["full_clarify"],
+        "prompt_limit": 1000,
+    }
+
+    def strict_training(extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return apply_training_overrides(
+            {"max_seq_length": 1792, "max_prompt_length": 1024},
+            dict(extra or {}),
+        )
+
+    def quick_overrides(
+        *,
+        max_steps: int = 25,
+        save_steps: int | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "training": {
+                "max_steps": max_steps,
+                "save_steps": save_steps if save_steps is not None else max_steps,
+            }
+        }
+
+    def candidate(
+        experiment_id: str,
+        hypothesis: str,
+        training: Mapping[str, Any] | None = None,
+        *,
+        max_steps: int = 25,
+        dataset_overrides: dict[str, Any] | None = None,
+    ) -> CampaignExperiment:
+        return CampaignExperiment(
+            experiment_id=experiment_id,
+            hypothesis=hypothesis,
+            short_description=experiment_id.removeprefix("post_").replace("_", " "),
+            overrides=apply_training_overrides(
+                quick_overrides(max_steps=max_steps),
+                {"training": dict(training or {})},
+            ),
+            dataset_overrides=dataset_overrides or {},
+        )
+
+    return [
+        candidate(
+            "post_scope_penalty_175_q25",
+            "Test whether the winning scope guard is slightly too strong.",
+            {"reward_weights": {"invalid_scope_penalty": 1.75}},
+        ),
+        candidate(
+            "post_scope_penalty_225_q25",
+            "Test whether a small scope-penalty increase improves the g19 tail.",
+            {"reward_weights": {"invalid_scope_penalty": 2.25}},
+        ),
+        candidate(
+            "post_scope_penalty_250_q25",
+            "Probe the upper edge before the failed v2 scope penalty.",
+            {"reward_weights": {"invalid_scope_penalty": 2.5}},
+        ),
+        candidate(
+            "post_scope_penalty_275_q25",
+            "Check whether scope pressure fails gradually or only near 3.0.",
+            {"reward_weights": {"invalid_scope_penalty": 2.75}},
+        ),
+        candidate(
+            "post_invalid_ratio_055_q25",
+            "Tighten the invalid-completion allowance below the winning run.",
+            {"max_invalid_completion_ratio": 0.55},
+        ),
+        candidate(
+            "post_invalid_ratio_075_q25",
+            "Relax the invalid-completion allowance to see if v1 was over-gated.",
+            {"max_invalid_completion_ratio": 0.75},
+        ),
+        candidate(
+            "post_ratio_140_q25",
+            "Constrain relative output length without reducing token budget.",
+            {"max_completion_ratio": 1.4},
+        ),
+        candidate(
+            "post_ratio_130_q25",
+            "Apply a stronger output-ratio guard while keeping 384 tokens.",
+            {"max_completion_ratio": 1.3},
+        ),
+        candidate(
+            "post_completion_352_q25",
+            "Try a modestly shorter completion budget than the g19 champion.",
+            {"max_completion_length": 352},
+        ),
+        candidate(
+            "post_completion_416_q25",
+            "Check whether a little more completion budget helps behavior wins.",
+            {"max_completion_length": 416},
+        ),
+        candidate(
+            "post_completion_320_soft_q25",
+            "Retest 320 tokens with the g19 scope guard instead of the 256 contract.",
+            {"max_completion_length": 320, "reward_weights": {"truncation_penalty": 2.5}},
+        ),
+        candidate(
+            "post_completion_448_q25",
+            "Test whether the full-prompt eval wants more room than 384 tokens.",
+            {"max_completion_length": 448},
+        ),
+        candidate(
+            "post_behavior_375_q25",
+            "Nudge behavior reward after g19 improved hard metrics.",
+            {"reward_weights": {"behavior": 3.75}},
+        ),
+        candidate(
+            "post_behavior_400_q25",
+            "Probe a stronger behavior-only nudge from the g19 profile.",
+            {"reward_weights": {"behavior": 4.0}},
+        ),
+        candidate(
+            "post_compile_375_q25",
+            "Nudge compile reward while preserving the behavior balance.",
+            {"reward_weights": {"compile": 3.75}},
+        ),
+        candidate(
+            "post_compile_400_q25",
+            "Probe stronger compile pressure from the g19 profile.",
+            {"reward_weights": {"compile": 4.0}},
+        ),
+        candidate(
+            "post_verifier_375_q25",
+            "Raise compile and behavior together without changing style weights.",
+            {"reward_weights": {"compile": 3.75, "behavior": 3.75}},
+        ),
+        candidate(
+            "post_verifier_400_sig125_q25",
+            "Trade some signature pressure for stronger verifier rewards.",
+            {"reward_weights": {"compile": 4.0, "behavior": 4.0, "signature": 1.25}},
+        ),
+        candidate(
+            "post_signature_175_q25",
+            "Check whether signature fidelity is still the limiting safety signal.",
+            {"reward_weights": {"signature": 1.75}},
+        ),
+        candidate(
+            "post_format_120_q25",
+            "Increase format pressure now that JSON validity is at 1.0.",
+            {"reward_weights": {"format": 1.2}},
+        ),
+        candidate(
+            "post_cleanup_readability_q25",
+            "See if human-facing quality can rise without giving back verifier wins.",
+            {"reward_weights": {"cleanup": 1.1, "readability": 0.5}},
+        ),
+        candidate(
+            "post_hallucination_150_q25",
+            "Suppress drift with a stronger hallucination penalty.",
+            {"reward_weights": {"hallucination_penalty": 1.5}},
+        ),
+        candidate(
+            "post_constant_300_q25",
+            "Increase invented-constant pressure while keeping scope at g19.",
+            {"reward_weights": {"unknown_constant_penalty": 3.0}},
+        ),
+        candidate(
+            "post_bool_100_q25",
+            "Add a light bool/type guard without the failed heavy type mix.",
+            {"reward_weights": {"unsupported_bool_penalty": 1.0}},
+        ),
+        candidate(
+            "post_constant_bool_q25",
+            "Combine light constant and bool guards after the g19 win.",
+            {
+                "reward_weights": {
+                    "unknown_constant_penalty": 2.5,
+                    "unsupported_bool_penalty": 1.0,
+                }
+            },
+        ),
+        candidate(
+            "post_cool_sampling_q25",
+            "Cool rollout sampling to reduce bad-tail variance.",
+            {"rollout_temperature": 0.9, "rollout_top_p": 0.95, "rollout_top_k": 50},
+        ),
+        candidate(
+            "post_cool_sampling_rep_q25",
+            "Combine cooler sampling with a tiny repetition penalty.",
+            {
+                "rollout_temperature": 0.85,
+                "rollout_top_p": 0.9,
+                "rollout_top_k": 50,
+                "rollout_repetition_penalty": 1.02,
+            },
+        ),
+        candidate(
+            "post_warm_sampling_q25",
+            "Test whether a bit more rollout diversity helps find behavior wins.",
+            {"rollout_temperature": 1.05, "rollout_top_p": 1.0},
+        ),
+        candidate(
+            "post_top_p_095_q25",
+            "Lower top-p without changing temperature.",
+            {"rollout_top_p": 0.95},
+        ),
+        candidate(
+            "post_repetition_102_q25",
+            "Add a small repetition penalty without changing sampling temperature.",
+            {"rollout_repetition_penalty": 1.02},
+        ),
+        candidate(
+            "post_lr_low_q50",
+            "Run a longer low-LR pilot to test stability around g19.",
+            {"learning_rate": 1.0e-6, "warmup_ratio": 0.05},
+            max_steps=50,
+        ),
+        candidate(
+            "post_lr_high_q50",
+            "Run a longer high-LR pilot to test whether g19 is under-updating.",
+            {"learning_rate": 2.0e-6, "warmup_ratio": 0.05},
+            max_steps=50,
+        ),
+        candidate(
+            "post_gradaccum2_q50",
+            "Use a higher effective batch to reduce GRPO update noise.",
+            {"grad_accum_steps": 2, "learning_rate": 1.0e-6, "warmup_ratio": 0.05},
+            max_steps=50,
+        ),
+        candidate(
+            "post_generations5_q50",
+            "Use five rollouts to improve group baselines without the failed g6 jump.",
+            {"generations_per_prompt": 5},
+            max_steps=50,
+        ),
+        candidate(
+            "post_generations3_q50",
+            "Use three rollouts to test whether cheaper updates preserve the signal.",
+            {"generations_per_prompt": 3},
+            max_steps=50,
+        ),
+        candidate(
+            "post_context_plus_strict_data_q50",
+            "Retest context-plus strict data from the g19 reward profile.",
+            {"max_seq_length": 1792, "max_prompt_length": 1024},
+            max_steps=50,
+            dataset_overrides={
+                "prompt_mode": "context_plus_strict",
+                "task_types": ["full_clarify", "cleanup"],
+                "prompt_limit": 1000,
+            },
+        ),
+        candidate(
+            "post_context_plus_data_q50",
+            "Retest context-plus data without the strict prompt wording.",
+            {"max_seq_length": 1792, "max_prompt_length": 1024},
+            max_steps=50,
+            dataset_overrides={
+                "prompt_mode": "context_plus",
+                "task_types": ["full_clarify", "cleanup"],
+                "prompt_limit": 1000,
+            },
+        ),
+        candidate(
+            "post_full_prompt_data_q50",
+            "Retest full-prompt data now that the reward contract is safer.",
+            {"max_seq_length": 2048, "max_prompt_length": 1152},
+            max_steps=50,
+            dataset_overrides={
+                "prompt_mode": "full",
+                "task_types": ["full_clarify", "cleanup"],
+                "prompt_limit": 1000,
+            },
+        ),
+        candidate(
+            "post_full_only_data_q50",
+            "Train only full-clarify rows to remove cleanup task interference.",
+            {},
+            max_steps=50,
+            dataset_overrides={
+                "prompt_mode": "context_plus_strict",
+                "task_types": ["full_clarify"],
+                "prompt_limit": 1000,
+            },
+        ),
+        candidate(
+            "post_cleanup_only_data_q50",
+            "Train only cleanup rows to test if structure repair is the useful task.",
+            {},
+            max_steps=50,
+            dataset_overrides={
+                "prompt_mode": "context_plus_strict",
+                "task_types": ["cleanup"],
+                "prompt_limit": 1000,
+            },
+        ),
+        candidate(
+            "post2_strict_data_q200",
+            "Give the strongest post-target data recipe a longer update horizon.",
+            strict_training(),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_lr_low_q200",
+            "Test whether the strict data lift needs slower long-horizon updates.",
+            strict_training({"learning_rate": 1.0e-6, "warmup_ratio": 0.05}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_lr_high_q200",
+            "Test whether the strict data lift is under-updating at the champion LR.",
+            strict_training({"learning_rate": 2.0e-6, "warmup_ratio": 0.05}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_completion448_q200",
+            "Allow more completion room for strict-context examples over a longer horizon.",
+            strict_training({"max_completion_length": 448}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_completion320_q200",
+            "Check whether shorter strict-context answers retain the hard-metric lift.",
+            strict_training({"max_completion_length": 320}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_ratio140_q200",
+            "Apply the best lightweight length-ratio signal to strict-context data.",
+            strict_training({"max_completion_ratio": 1.4}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_verifier375_q200",
+            "Nudge compile and behavior rewards on the strict-context data recipe.",
+            strict_training({"reward_weights": {"compile": 3.75, "behavior": 3.75}}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_verifier400_q200",
+            "Use stronger verifier pressure with less signature dominance.",
+            strict_training(
+                {"reward_weights": {"compile": 4.0, "behavior": 4.0, "signature": 1.25}}
+            ),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_scope175_q200",
+            "Relax scope pressure inside the strict-context data recipe.",
+            strict_training({"reward_weights": {"invalid_scope_penalty": 1.75}}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_scope250_q200",
+            "Increase scope pressure inside the strict-context data recipe.",
+            strict_training({"reward_weights": {"invalid_scope_penalty": 2.5}}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_g3_q200",
+            "Combine the g3 rollout signal with strict-context data for a longer horizon.",
+            strict_training({"generations_per_prompt": 3}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_g5_q200",
+            "Retest five rollouts only where strict-context data improved hard metrics.",
+            strict_training({"generations_per_prompt": 5}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_gradaccum2_q200",
+            "Reduce update noise for the strict-context data recipe.",
+            strict_training(
+                {
+                    "grad_accum_steps": 2,
+                    "learning_rate": 1.0e-6,
+                    "warmup_ratio": 0.05,
+                }
+            ),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_full_only_q200",
+            "Give full-clarify-only strict-context data a longer horizon.",
+            strict_training(),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_full_only),
+        ),
+        candidate(
+            "post2_strict_full_only_verifier_q200",
+            "Pair full-clarify-only strict-context data with stronger verifier rewards.",
+            strict_training({"reward_weights": {"compile": 4.0, "behavior": 4.0}}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_full_only),
+        ),
+        candidate(
+            "post2_strict_data_limit1500_q200",
+            "Broaden the strict-context prompt pool while keeping the same task mix.",
+            strict_training(),
+            max_steps=200,
+            dataset_overrides={
+                **strict_context_data,
+                "prompt_limit": 1500,
+            },
+        ),
+        candidate(
+            "post2_strict_data_readability050_q200",
+            "Check whether readability pressure can improve quality after hard metrics lift.",
+            strict_training({"reward_weights": {"readability": 0.5, "cleanup": 1.1}}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_constant300_q200",
+            "Retest stronger invented-constant pressure only on strict-context data.",
+            strict_training({"reward_weights": {"unknown_constant_penalty": 3.0}}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_sampling_cool_q200",
+            "Cool rollout sampling where strict-context data produced the best new signal.",
+            strict_training(
+                {
+                    "rollout_temperature": 0.9,
+                    "rollout_top_p": 0.95,
+                    "rollout_top_k": 50,
+                }
+            ),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+        candidate(
+            "post2_strict_data_sampling_warm_q200",
+            "Add mild rollout diversity to strict-context data over a longer horizon.",
+            strict_training({"rollout_temperature": 1.05, "rollout_top_p": 1.0}),
+            max_steps=200,
+            dataset_overrides=dict(strict_context_data),
+        ),
+    ]
+
+
 def choose_campaign_experiment(
     champion_metrics: Mapping[str, float],
     invalid_reasons: Mapping[str, int],
@@ -625,6 +1101,11 @@ def choose_campaign_experiment(
 ) -> CampaignExperiment | None:
     if search_space == "long300":
         for candidate in _long300_campaign_candidates():
+            if candidate.experiment_id not in prior_experiment_ids:
+                return candidate
+        return None
+    if search_space == "post_target":
+        for candidate in _post_target_campaign_candidates():
             if candidate.experiment_id not in prior_experiment_ids:
                 return candidate
         return None
@@ -1593,6 +2074,252 @@ class GrpoCampaign:
     def _load_entries(self) -> list[dict[str, Any]]:
         return _read_jsonl(self.log_path)
 
+    def _eval_manifest_candidates(
+        self,
+        *,
+        profile_path: Path,
+        checkpoint_dir: Path | None = None,
+        scout: bool | None = None,
+    ) -> list[tuple[Path, dict[str, Any]]]:
+        candidates: list[tuple[Path, dict[str, Any]]] = []
+        normalized_checkpoint = (
+            _normalized_path_ref(checkpoint_dir) if checkpoint_dir is not None else None
+        )
+        for eval_dir in _run_dirs(self.root, "eval-grpo-checkpoint"):
+            manifest_path = eval_dir / "checkpoint_eval_manifest.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                manifest = _load_json(manifest_path)
+            except (json.JSONDecodeError, OSError):
+                continue
+            if not _profile_ref_matches(
+                manifest_ref=manifest.get("training_profile", ""),
+                root=self.root,
+                profile_path=profile_path,
+            ):
+                continue
+            if normalized_checkpoint is not None and _normalized_path_ref(
+                manifest.get("checkpoint_dir", "")
+            ) != normalized_checkpoint:
+                continue
+            if manifest.get("split") != "val":
+                continue
+            if manifest.get("prompt_profile") != self.eval_prompt_profile:
+                continue
+            if int(manifest.get("max_new_tokens", 0)) != self.eval_max_new_tokens:
+                continue
+            sample_count = int(manifest.get("sample_count", 0))
+            if scout is True and sample_count != self.scout_sample_limit:
+                continue
+            if scout is False and sample_count <= self.scout_sample_limit:
+                continue
+            candidates.append((eval_dir, manifest))
+        return sorted(candidates, key=lambda item: item[0].stat().st_mtime)
+
+    def _append_iteration_record(
+        self,
+        *,
+        iteration: int,
+        experiment: CampaignExperiment,
+        status: str,
+        profile_path: Path,
+        candidate_profile_payload: Mapping[str, Any],
+        candidate_dataset_path: Path | None,
+        candidate_dataset_metadata: Mapping[str, Any],
+        train_dir: Path | None,
+        scout_dir: Path | None,
+        confirm_dir: Path | None,
+        scout_score: float | None,
+        confirm_score: float | None,
+        sft_score: float,
+        scout_metrics: Mapping[str, float],
+        confirm_metrics: Mapping[str, float],
+        notes: str,
+    ) -> None:
+        _append_jsonl(
+            self.log_path,
+            {
+                "iteration": iteration,
+                "timestamp": datetime.now().astimezone().isoformat(),
+                "status": status,
+                "experiment_id": experiment.experiment_id,
+                "hypothesis": experiment.hypothesis,
+                "profile_path": str(profile_path),
+                "dataset_path": str(candidate_dataset_path) if candidate_dataset_path else None,
+                "dataset": dict(candidate_dataset_metadata),
+                "train_run_id": train_dir.name if train_dir else None,
+                "scout_eval_run_id": scout_dir.name if scout_dir else None,
+                "confirm_eval_run_id": confirm_dir.name if confirm_dir else None,
+                "scout_score": scout_score,
+                "confirm_score": confirm_score,
+                "sft_score": sft_score,
+                "target_improvement": self.target_improvement,
+                "metrics": (
+                    dict(confirm_metrics)
+                    if confirm_dir is not None
+                    else dict(scout_metrics)
+                ),
+                "config_snapshot": self._profile_snapshot(candidate_profile_payload),
+                "notes": notes,
+            },
+        )
+
+    def _recover_completed_iteration(
+        self,
+        *,
+        experiment: CampaignExperiment,
+        iteration: int,
+        champion: Mapping[str, Any],
+        champion_metrics: Mapping[str, float],
+        champion_scout_metrics: Mapping[str, float],
+        sft_metrics: Mapping[str, float],
+        sft_score: float,
+    ) -> bool:
+        profile_path = self.profile_dir / _profile_file_name(
+            iteration,
+            experiment.experiment_id,
+        )
+        if not profile_path.exists():
+            return False
+        scout_candidates = self._eval_manifest_candidates(
+            profile_path=profile_path,
+            scout=True,
+        )
+        if not scout_candidates:
+            return False
+        scout_dir, scout_manifest = scout_candidates[-1]
+        scout_metrics = _metrics_from_eval_manifest(scout_manifest)
+        scout_score = score_metrics(scout_metrics)
+        checkpoint_ref = scout_manifest.get("checkpoint_dir")
+        checkpoint_dir = Path(str(checkpoint_ref)) if checkpoint_ref else None
+        train_dir = checkpoint_dir.parent if checkpoint_dir is not None else None
+        candidate_profile_payload = _load_yaml(profile_path)
+        (
+            candidate_dataset_path,
+            candidate_dataset_metadata,
+        ) = self._dataset_path_for_experiment(
+            iteration=iteration,
+            experiment=experiment,
+        )
+
+        status = "discard"
+        notes = "Recovered completed scout evaluation after an interrupted campaign process."
+        confirm_dir: Path | None = None
+        confirm_score: float | None = None
+        confirm_metrics: dict[str, float] = dict.fromkeys(_SCORE_KEYS, 0.0)
+        champion_score = float(champion.get("score", 0.0))
+        champion_scout_score = float(champion.get("scout_score", champion_score))
+
+        if not _hard_keep_gates_pass(scout_metrics, champion_scout_metrics):
+            notes += " Scout evaluation failed the scout hard keep gates against the champion."
+        elif scout_score < champion_scout_score + self.keep_improvement:
+            notes += " Scout score did not clear the scout promotion threshold."
+        else:
+            confirm_candidates = self._eval_manifest_candidates(
+                profile_path=profile_path,
+                checkpoint_dir=checkpoint_dir,
+                scout=False,
+            )
+            if not confirm_candidates:
+                if train_dir is None:
+                    notes += " Could not locate a checkpoint for full validation."
+                else:
+                    confirm_dir = _new_run_from_command(
+                        self.root,
+                        "eval-grpo-checkpoint",
+                        [
+                            sys.executable,
+                            "-m",
+                            "decomp_clarifier.cli",
+                            "eval-grpo-checkpoint",
+                            "--checkpoint-dir",
+                            str(train_dir / "model"),
+                            "--training-profile",
+                            str(profile_path.relative_to(self.root)),
+                            "--split",
+                            "val",
+                            "--max-new-tokens",
+                            str(self.eval_max_new_tokens),
+                            "--prompt-profile",
+                            self.eval_prompt_profile,
+                            "--no-thinking",
+                        ],
+                        self.logger,
+                    )
+                    confirm_manifest = _load_json(
+                        confirm_dir / "checkpoint_eval_manifest.json"
+                    )
+                    confirm_metrics = _metrics_from_eval_manifest(confirm_manifest)
+            else:
+                confirm_dir, confirm_manifest = confirm_candidates[-1]
+                confirm_metrics = _metrics_from_eval_manifest(confirm_manifest)
+
+            if confirm_dir is not None:
+                confirm_score = score_metrics(confirm_metrics)
+                target_passed = sft_target_passed(
+                    confirm_metrics,
+                    candidate_score=confirm_score,
+                    sft_metrics=sft_metrics,
+                    sft_score=sft_score,
+                    target_improvement=self.target_improvement,
+                )
+                if (
+                    _hard_keep_gates_pass(confirm_metrics, champion_metrics)
+                    and (
+                        confirm_score >= champion_score + self.confirm_improvement
+                        or target_passed
+                    )
+                ):
+                    status = "target_keep" if target_passed else "keep"
+                    notes += (
+                        " Full validation reached the SFT target and cleared all hard gates."
+                        if target_passed
+                        else " Full validation beat the champion and cleared all hard gates."
+                    )
+                    self._write_champion(
+                        profile_path=profile_path,
+                        scout_metrics=scout_metrics,
+                        metrics=confirm_metrics,
+                        scout_score=scout_score,
+                        score=confirm_score,
+                        train_run_id=train_dir.name if train_dir else "",
+                        eval_run_id=confirm_dir.name,
+                        experiment_id=experiment.experiment_id,
+                        hypothesis=experiment.hypothesis,
+                        config_snapshot=self._profile_snapshot(candidate_profile_payload),
+                    )
+                else:
+                    notes += " Full validation failed the final keep threshold or a hard gate."
+
+        self._append_iteration_record(
+            iteration=iteration,
+            experiment=experiment,
+            status=status,
+            profile_path=profile_path,
+            candidate_profile_payload=candidate_profile_payload,
+            candidate_dataset_path=candidate_dataset_path,
+            candidate_dataset_metadata=candidate_dataset_metadata,
+            train_dir=train_dir,
+            scout_dir=scout_dir,
+            confirm_dir=confirm_dir,
+            scout_score=scout_score,
+            confirm_score=confirm_score,
+            sft_score=sft_score,
+            scout_metrics=scout_metrics,
+            confirm_metrics=confirm_metrics,
+            notes=notes,
+        )
+        self.logger.info(
+            "recovered iteration=%s experiment=%s status=%s scout=%s confirm=%s",
+            iteration,
+            experiment.experiment_id,
+            status,
+            f"{scout_score:.4f}",
+            f"{confirm_score:.4f}" if confirm_score is not None else "n/a",
+        )
+        return True
+
     def _write_champion(
         self,
         *,
@@ -1850,6 +2577,16 @@ class GrpoCampaign:
                 self.logger.info("no remaining hypotheses; stopping campaign")
                 return
             iteration = max(int(entry.get("iteration", 0)) for entry in entries) + 1
+            if self._recover_completed_iteration(
+                experiment=experiment,
+                iteration=iteration,
+                champion=champion,
+                champion_metrics=champion_metrics,
+                champion_scout_metrics=champion_scout_metrics,
+                sft_metrics=sft_metrics,
+                sft_score=sft_score,
+            ):
+                continue
             champion_profile_path = Path(str(champion["profile_path"]))
             champion_profile_payload = _load_yaml(champion_profile_path)
             profile_path = self._write_candidate_profile(
@@ -2006,28 +2743,23 @@ class GrpoCampaign:
                 notes = str(exc)
                 self.logger.exception("iteration crashed: %s", exc)
 
-            _append_jsonl(
-                self.log_path,
-                {
-                    "iteration": iteration,
-                    "timestamp": datetime.now().astimezone().isoformat(),
-                    "status": status,
-                    "experiment_id": experiment.experiment_id,
-                    "hypothesis": experiment.hypothesis,
-                    "profile_path": str(profile_path),
-                    "dataset_path": str(candidate_dataset_path) if candidate_dataset_path else None,
-                    "dataset": candidate_dataset_metadata,
-                    "train_run_id": train_dir.name if train_dir else None,
-                    "scout_eval_run_id": scout_dir.name if scout_dir else None,
-                    "confirm_eval_run_id": confirm_dir.name if confirm_dir else None,
-                    "scout_score": scout_score,
-                    "confirm_score": confirm_score,
-                    "sft_score": sft_score,
-                    "target_improvement": self.target_improvement,
-                    "metrics": confirm_metrics if confirm_dir is not None else scout_metrics,
-                    "config_snapshot": self._profile_snapshot(candidate_profile_payload),
-                    "notes": notes,
-                },
+            self._append_iteration_record(
+                iteration=iteration,
+                experiment=experiment,
+                status=status,
+                profile_path=profile_path,
+                candidate_profile_payload=candidate_profile_payload,
+                candidate_dataset_path=candidate_dataset_path,
+                candidate_dataset_metadata=candidate_dataset_metadata,
+                train_dir=train_dir,
+                scout_dir=scout_dir,
+                confirm_dir=confirm_dir,
+                scout_score=scout_score,
+                confirm_score=confirm_score,
+                sft_score=sft_score,
+                scout_metrics=scout_metrics,
+                confirm_metrics=confirm_metrics,
+                notes=notes,
             )
             self.logger.info(
                 "iteration=%s experiment=%s status=%s scout=%s confirm=%s",
@@ -2061,7 +2793,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-stop-on-target", action="store_true")
     parser.add_argument(
         "--search-space",
-        choices=("default", "long300"),
+        choices=("default", "long300", "post_target"),
         default=DEFAULT_SEARCH_SPACE,
     )
     parser.add_argument("--log-file", type=Path, default=None)
