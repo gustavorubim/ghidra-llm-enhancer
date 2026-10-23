@@ -30,3 +30,6 @@ research/legacy/campaigns/
 *.egg-info/
 *.pyc
 unsloth_compiled_cache/
+
+# Local agent settings
+.claude/settings.local.json
